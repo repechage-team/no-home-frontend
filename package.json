@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "node --test src/houseSearchParams.test.js src/chat/chatClient.test.js",
     "test:auto-import": "node --test src/houseSearchParams.test.js",
+    "test:widget": "node --test src/chat/chatClient.test.js",
     "preview": "vite preview"
   },
   "dependencies": {

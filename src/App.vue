@@ -6,6 +6,7 @@ import {
   seoulLawdCodes,
   seoulDistricts,
 } from './houseSearchParams'
+import ChatWidget from './components/ChatWidget.vue'
 
 const SEARCH_PAGE_SIZE = 10
 const SEARCH_REQUEST_TIMEOUT_MS = 25000
@@ -175,6 +176,9 @@ const keepSearchLoadingVisible = async (startedAt) => {
 }
 
 export default {
+  components: {
+    ChatWidget,
+  },
   data() {
     return {
       filters: emptyFilters(),
@@ -1108,5 +1112,7 @@ export default {
         </div>
       </aside>
     </main>
+
+    <ChatWidget :logged-in="!!member" />
   </div>
 </template>
