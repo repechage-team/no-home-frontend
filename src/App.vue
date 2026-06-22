@@ -1031,7 +1031,7 @@ export default {
         <div class="danger-zone">
           <strong>회원 탈퇴</strong>
           <p>삭제하면 현재 계정이 물리 삭제되고 세션이 종료됩니다.</p>
-          <label><span>확인 문구</span><input v-model="deleteConfirm" type="text" placeholder="DELETE" /></label>
+          <label><span>확인 문구</span><input v-model="deleteConfirm" type="text" placeholder="삭제" /></label>
           <button class="danger-button" type="button" :disabled="memberLoading" @click="deleteMember">회원 삭제</button>
         </div>
       </div>
