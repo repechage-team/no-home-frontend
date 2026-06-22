@@ -40,6 +40,41 @@ export const seoulLawdCodes = {
 
 export const seoulDistricts = Object.keys(seoulLawdCodes)
 
+// ── 에이전트(실행) 모드 capability 단일 출처 ──────────────────────────────
+// 메인 검색이 지원하는 필터를 한 곳에서 선언한다. 에이전트 명령의 filters는 제네릭 맵이므로,
+// 프론트는 이 스키마에 있는 키만 적용하고 모르는 키는 무시·보고한다(메인 필터 변경에 견고).
+// 필터를 추가/변경할 때 이 객체만 갱신하면 에이전트가 자동으로 적응한다.
+export const filterSchema = {
+  sido: { type: 'enum', values: ['서울특별시'] },
+  sigungu: { type: 'enum', values: seoulDistricts },
+  umdNm: { type: 'string' },
+  aptName: { type: 'string' },
+  startDealMonth: { type: 'month' }, // YYYY-MM
+  endDealMonth: { type: 'month' }, // YYYY-MM
+  sort: { type: 'enum', values: ['latest', 'oldest', 'priceDesc', 'priceAsc'] },
+  minPrice: { type: 'number' }, // 만원
+  maxPrice: { type: 'number' }, // 만원
+}
+
+// 백엔드 프롬프트에 주입할 지원 필터 키 목록(allow-list 힌트).
+export const capabilities = () => Object.keys(filterSchema)
+
+// 에이전트가 돌려준 제네릭 filters 맵을 대상 filters 객체에 적용한다.
+// 인식하는 키만 적용하고, 모르는 키는 ignored로 보고한다(앱은 그대로 동작 유지).
+export const applyAgentFilters = (filters, incoming = {}) => {
+  const applied = {}
+  const ignored = []
+  for (const [key, value] of Object.entries(incoming || {})) {
+    if (Object.prototype.hasOwnProperty.call(filterSchema, key)) {
+      filters[key] = value
+      applied[key] = value
+    } else {
+      ignored.push(key)
+    }
+  }
+  return { applied, ignored }
+}
+
 export const normalizeDealYmd = (filters) => {
   if (filters.dealMonth) {
     return filters.dealMonth.replace('-', '')
