@@ -97,11 +97,11 @@ const looksLikeMojibake = (value) => {
 
 const loadKakaoMapsSdk = () => {
   if (!KAKAO_MAP_API_KEY) {
-    return Promise.reject(new Error('VITE_KAKAO_MAP_API_KEY媛 ?ㅼ젙?섏? ?딆븯?듬땲??'))
+    return Promise.reject(new Error('VITE_KAKAO_MAP_API_KEY가 설정되지 않았습니다.'))
   }
 
   if (typeof window === 'undefined') {
-    return Promise.reject(new Error('釉뚮씪?곗? ?섍꼍?먯꽌留?吏?꾨? ?ъ슜?????덉뒿?덈떎.'))
+    return Promise.reject(new Error('브라우저 환경에서만 지도를 사용할 수 있습니다.'))
   }
 
   if (window.kakao?.maps?.services) {
@@ -116,7 +116,7 @@ const loadKakaoMapsSdk = () => {
     const existingScript = document.querySelector('script[data-kakao-map-sdk="true"]')
     const finishLoad = () => {
       if (!window.kakao?.maps) {
-        reject(new Error('Kakao Map SDK瑜?遺덈윭?ㅼ? 紐삵뻽?듬땲??'))
+        reject(new Error('Kakao Map SDK를 불러오지 못했습니다.'))
         return
       }
 
@@ -221,7 +221,7 @@ export default {
       map: null,
       markerDisplayCount: 0,
       mapLoading: false,
-      mapStatus: '吏??API ?ㅻ? ?뺤씤?섍퀬 ?덉뒿?덈떎.',
+      mapStatus: '지도 API 키를 확인하고 있습니다.',
       mapError: '',
       mapReady: false,
     }
@@ -339,7 +339,7 @@ export default {
       const body = await response.json().catch(() => null)
 
       if (!response.ok || body?.success === false) {
-        const error = new Error(body?.message || `?붿껌 ?ㅽ뙣 (${response.status})`)
+        const error = new Error(body?.message || `요청 실패 (${response.status})`)
         error.status = response.status
         throw error
       }
@@ -360,7 +360,7 @@ export default {
         if (exception?.status === 401) {
           this.setCurrentMember(null)
           if (!silent) {
-            this.memberMessage = '濡쒓렇???????뺣낫瑜??뺤씤?????덉뒿?덈떎.'
+            this.memberMessage = '로그인 후 내 정보를 확인할 수 있습니다.'
           }
           return
         }
@@ -368,7 +368,7 @@ export default {
         if (!silent) {
           this.memberError = exception instanceof Error
             ? exception.message
-            : '?뚯썝 ?뺣낫瑜?遺덈윭?ㅼ? 紐삵뻽?듬땲??'
+            : '회원 정보를 불러오지 못했습니다.'
         }
       } finally {
         this.memberLoading = false
@@ -424,11 +424,11 @@ export default {
           phone: '',
         }
         this.accountMode = 'login'
-        this.memberMessage = '?뚯썝媛?낆씠 ?꾨즺?섏뿀?듬땲?? 諛⑷툑 留뚮뱺 怨꾩젙?쇰줈 濡쒓렇?명빐 二쇱꽭??'
+        this.memberMessage = '회원가입이 완료되었습니다. 방금 만든 계정으로 로그인해 주세요.'
       } catch (exception) {
         this.memberError = exception instanceof Error
           ? exception.message
-          : '?뚯썝媛?낆뿉 ?ㅽ뙣?덉뒿?덈떎.'
+          : '회원가입에 실패했습니다.'
       } finally {
         this.memberLoading = false
       }
@@ -446,11 +446,11 @@ export default {
         this.setCurrentMember(member)
         this.loginForm.password = ''
         this.accountMode = 'profile'
-        this.memberMessage = '濡쒓렇?몃릺?덉뒿?덈떎.'
+        this.memberMessage = '로그인되었습니다.'
       } catch (exception) {
         this.memberError = exception instanceof Error
           ? exception.message
-          : '濡쒓렇?몄뿉 ?ㅽ뙣?덉뒿?덈떎.'
+          : '로그인에 실패했습니다.'
       } finally {
         this.memberLoading = false
       }
@@ -466,11 +466,11 @@ export default {
         })
         this.setCurrentMember(null)
         this.accountMode = 'login'
-        this.memberMessage = '濡쒓렇?꾩썐?섏뿀?듬땲??'
+        this.memberMessage = '로그아웃되었습니다.'
       } catch (exception) {
         this.setCurrentMember(null)
         this.accountMode = 'login'
-        this.memberMessage = '濡쒓렇???곹깭瑜??뺣━?덉뒿?덈떎.'
+        this.memberMessage = '로그인 상태를 정리했습니다.'
       } finally {
         this.memberLoading = false
       }
@@ -486,18 +486,18 @@ export default {
           body: JSON.stringify(this.profileForm),
         })
         this.setCurrentMember(member)
-        this.memberMessage = '???뺣낫媛 ?섏젙?섏뿀?듬땲??'
+        this.memberMessage = '내 정보가 수정되었습니다.'
       } catch (exception) {
         this.memberError = exception instanceof Error
           ? exception.message
-          : '???뺣낫 ?섏젙???ㅽ뙣?덉뒿?덈떎.'
+          : '내 정보 수정에 실패했습니다.'
       } finally {
         this.memberLoading = false
       }
     },
     async deleteMember() {
-      if (this.deleteConfirm !== '??젣') {
-        this.memberError = '?뚯썝 ??젣瑜?吏꾪뻾?섎젮硫??뺤씤?????젣瑜??낅젰??二쇱꽭??'
+      if (this.deleteConfirm !== '삭제') {
+        this.memberError = '회원 삭제를 진행하려면 확인을 위해 삭제를 입력해 주세요.'
         return
       }
 
@@ -512,11 +512,11 @@ export default {
         this.setCurrentMember(null)
         this.deleteConfirm = ''
         this.accountMode = 'login'
-        this.memberMessage = '?뚯썝 ?뺣낫媛 ??젣?섏뿀?듬땲??'
+        this.memberMessage = '회원 정보가 삭제되었습니다.'
       } catch (exception) {
         this.memberError = exception instanceof Error
           ? exception.message
-          : '?뚯썝 ??젣???ㅽ뙣?덉뒿?덈떎.'
+          : '회원 삭제에 실패했습니다.'
       } finally {
         this.memberLoading = false
       }
@@ -575,7 +575,7 @@ export default {
         this.totalCount = 0
         this.error = exception instanceof Error
           ? exception.message
-          : '寃??以??ㅻ쪟媛 諛쒖깮?덉뒿?덈떎.'
+          : '검색 중 오류가 발생했습니다.'
         this.clearMapMarkers()
       } finally {
         if (requestId === this.searchRequestId) {
@@ -597,7 +597,7 @@ export default {
       const body = await response.json().catch(() => null)
 
       if (!response.ok || body?.success === false) {
-        throw new Error(body?.message || `寃???붿껌 ?ㅽ뙣 (${response.status})`)
+        throw new Error(body?.message || `검색 요청 실패 (${response.status})`)
       }
 
       return body?.data ?? body ?? {}
