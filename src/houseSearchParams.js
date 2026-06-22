@@ -3,7 +3,11 @@
   sigungu: '',
   umdNm: '',
   aptName: '',
-  dealMonth: '',
+  startDealMonth: '',
+  endDealMonth: '',
+  sort: 'latest',
+  minPrice: '',
+  maxPrice: '',
 })
 
 export const seoulLawdCodes = {
@@ -41,7 +45,24 @@ export const normalizeDealYmd = (filters) => {
     return filters.dealMonth.replace('-', '')
   }
 
+  if (filters.startDealMonth && filters.endDealMonth && filters.startDealMonth === filters.endDealMonth) {
+    return filters.startDealMonth.replace('-', '')
+  }
+
   return ''
+}
+
+export const normalizeDealYmdRange = (filters) => {
+  const dealYmd = normalizeDealYmd(filters)
+  if (dealYmd) {
+    return { dealYmd, startDealYmd: '', endDealYmd: '' }
+  }
+
+  return {
+    dealYmd: '',
+    startDealYmd: filters.startDealMonth ? filters.startDealMonth.replace('-', '') : '',
+    endDealYmd: filters.endDealMonth ? filters.endDealMonth.replace('-', '') : '',
+  }
 }
 
 const normalizeRegionName = (value) => value.trim().replace(/\s/g, '')
@@ -67,7 +88,21 @@ export const resolveLawdCds = (filters) => {
 }
 
 export const buildHouseSearchRequests = (filters, options = {}) => {
-  const dealYmd = normalizeDealYmd(filters)
+  return [buildHouseSearchFields(filters, options)]
+}
+
+export const buildHousePriceRangeRequests = (filters) => {
+  const fields = buildHouseSearchFields(filters)
+  delete fields.page
+  delete fields.size
+  delete fields.sort
+  delete fields.minPrice
+  delete fields.maxPrice
+  return [fields]
+}
+
+const buildHouseSearchFields = (filters, options = {}) => {
+  const { dealYmd, startDealYmd, endDealYmd } = normalizeDealYmdRange(filters)
   const lawdCds = resolveLawdCds(filters)
   const page = Math.max(Number(options.page || 1), 1)
   const size = Math.max(Number(options.size || 10), 1)
@@ -76,15 +111,33 @@ export const buildHouseSearchRequests = (filters, options = {}) => {
     && Boolean(filters.sigungu)
     && Boolean(dealYmd)
 
-  return [{
+  return {
     sido: selectedDistrictLawdCd ? '' : filters.sido.trim(),
     sigungu: selectedDistrictLawdCd ? '' : filters.sigungu.trim(),
     umdNm: filters.umdNm.trim(),
     aptName: filters.aptName.trim(),
     dealYmd,
+    startDealYmd,
+    endDealYmd,
     page: String(page),
     size: String(size),
     autoImport: shouldAutoImport ? 'true' : 'false',
     lawdCd: selectedDistrictLawdCd,
-  }]
+    sort: filters.sido?.trim() ? (filters.sort || 'latest') : '',
+    minPrice: normalizePriceFilter(filters.minPrice),
+    maxPrice: normalizePriceFilter(filters.maxPrice),
+  }
+}
+
+const normalizePriceFilter = (value) => {
+  if (value === null || value === undefined || value === '') {
+    return ''
+  }
+
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return ''
+  }
+
+  return String(Math.trunc(numeric))
 }
