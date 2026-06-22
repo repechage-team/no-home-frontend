@@ -1,5 +1,6 @@
 ﻿<script>
 import {
+  applyAgentFilters,
   buildHousePriceRangeRequests,
   buildHouseSearchRequests,
   emptyFilters,
@@ -247,6 +248,8 @@ export default {
       mapStatus: '지도 API 키를 확인하고 있습니다.',
       mapError: '',
       mapReady: false,
+      agentResult: null,
+      agentSeq: 0,
     }
   },
   mounted() {
@@ -975,6 +978,96 @@ export default {
       this.legalDongs = []
       this.loadLegalDongs()
     },
+    // 에이전트(실행) 모드: ChatWidget이 받은 구조화 명령을 페이지 동작으로 실행한다.
+    // 인식하는 필터 키만 적용하고, 적용 결과 요약(권위)을 위젯으로 돌려준다(서버 무상태).
+    async handleAgentCommand(command) {
+      try {
+        if (!command || !command.action) {
+          this.reportAgent('무엇을 도와드릴까요? 예: "강남구 2024년 5월 검색해줘"')
+          return
+        }
+        switch (command.action) {
+          case 'clarify':
+            this.reportAgent(command.clarify || command.summary || '조금 더 자세히 알려주세요.')
+            return
+          case 'reset':
+            this.resetSearch()
+            this.reportAgent('검색 조건을 초기화했어요.')
+            return
+          case 'search':
+          case 'setFilters': {
+            const { applied, ignored } = applyAgentFilters(this.filters, command.filters || {})
+            this.normalizeAgentFilters(applied)
+            if (command.action === 'search') {
+              await this.searchHouses(1)
+            }
+            this.reportAgent(this.buildAgentSummary(applied, ignored, command.action))
+            return
+          }
+          default:
+            this.reportAgent('아직 지원하지 않는 동작이에요. 검색·조건설정·초기화만 도와드릴 수 있어요.')
+        }
+      } catch (exception) {
+        this.reportAgent('요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.')
+      }
+    },
+    // 앱은 서울 전용이고 필터 간 의존성이 있어, 에이전트가 채운 필터에 동일한 side-effect를 반영한다.
+    normalizeAgentFilters(applied) {
+      // 자치구가 지정되면 시도를 서울로 보정해야 lawdCd 해석/정렬이 동작한다.
+      if ('sigungu' in applied && this.filters.sigungu && !isSeoul(this.filters.sido)) {
+        this.filters.sido = '서울특별시'
+      }
+      // 시도/시군구가 바뀌면 읍면동 목록을 갱신한다(동을 직접 지정하지 않았으면 초기화).
+      if ('sido' in applied || 'sigungu' in applied) {
+        if (!('umdNm' in applied)) {
+          this.filters.umdNm = ''
+        }
+        this.searchRequestId += 1
+        this.loadLegalDongs(this.selectedLawdCd)
+      }
+      // 시도가 비면 정렬 기본값 복원(handleSidoChange와 동일 규칙).
+      if (!this.filters.sido) {
+        this.filters.sort = 'latest'
+      }
+    },
+    buildAgentSummary(applied, ignored, action) {
+      const parts = []
+      if (applied.sigungu) {
+        parts.push(applied.sigungu)
+      } else if (applied.sido) {
+        parts.push(applied.sido)
+      }
+      if (applied.umdNm) {
+        parts.push(applied.umdNm)
+      }
+      if (applied.aptName) {
+        parts.push(applied.aptName)
+      }
+      const month = this.describeAgentMonth(applied)
+      if (month) {
+        parts.push(month)
+      }
+      const condition = parts.length ? parts.join('·') : '입력하신 조건'
+      let summary = action === 'search'
+        ? `${condition}로 검색했어요.`
+        : `${condition}로 검색 조건을 설정했어요.`
+      if (ignored && ignored.length) {
+        summary += ` (${ignored.join(', ')} 항목은 지원하지 않아 반영하지 못했어요.)`
+      }
+      return summary
+    },
+    describeAgentMonth(applied) {
+      const start = applied.startDealMonth
+      const end = applied.endDealMonth
+      if (start && end) {
+        return start === end ? start : `${start}~${end}`
+      }
+      return start || end || ''
+    },
+    reportAgent(text) {
+      this.agentSeq += 1
+      this.agentResult = { text, seq: this.agentSeq }
+    },
     async loadLegalDongs(lawdCd = this.selectedLawdCd) {
       const requestId = this.legalDongRequestId + 1
       this.legalDongRequestId = requestId
@@ -1560,6 +1653,13 @@ export default {
       </aside>
     </main>
 
-    <ChatWidget :logged-in="!!member" />
+    <ChatWidget
+      :logged-in="!!member"
+      :current-filters="filters"
+      :current-page="searchPage"
+      :total-pages="totalPages"
+      :agent-result="agentResult"
+      @agent-command="handleAgentCommand"
+    />
   </div>
 </template>

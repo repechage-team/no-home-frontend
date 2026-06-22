@@ -6,6 +6,8 @@ import {
   messageLength,
   parseChatResponse,
 } from '../chat/chatClient.js'
+import { parseAgentResponse } from '../chat/agentClient.js'
+import { capabilities } from '../houseSearchParams.js'
 
 export default {
   name: 'ChatWidget',
@@ -14,10 +16,30 @@ export default {
       type: Boolean,
       default: false,
     },
+    // 에이전트 모드용: 서버는 무상태이므로 현재 UI 상태를 함께 보낸다(App.vue가 전달).
+    currentFilters: {
+      type: Object,
+      default: () => ({}),
+    },
+    currentPage: {
+      type: Number,
+      default: 1,
+    },
+    totalPages: {
+      type: Number,
+      default: 1,
+    },
+    // App.vue가 명령을 적용한 뒤 돌려주는 권위 있는 요약. { text, seq } 형태로 매번 새 객체.
+    agentResult: {
+      type: Object,
+      default: null,
+    },
   },
+  emits: ['agent-command'],
   data() {
     return {
       open: false,
+      mode: 'question', // 'question' | 'agent'
       input: '',
       loading: false,
       loadingStatus: '',
@@ -54,6 +76,18 @@ export default {
         this.input = clamped
       }
     },
+    // App.vue가 명령을 적용한 뒤 권위 있는 요약을 돌려주면 답변 버블로 표시하고 로딩을 종료한다.
+    agentResult(result) {
+      if (!result) {
+        return
+      }
+      this.clearProgressTimers()
+      this.loading = false
+      if (result.text) {
+        this.messages.push({ role: 'assistant', text: result.text })
+      }
+      this.scrollToBottom()
+    },
   },
   beforeUnmount() {
     this.clearProgressTimers()
@@ -64,6 +98,13 @@ export default {
       if (this.open) {
         this.$nextTick(() => this.focusInput())
       }
+    },
+    setMode(mode) {
+      if (this.mode === mode || this.loading) {
+        return
+      }
+      this.mode = mode
+      this.$nextTick(() => this.focusInput())
     },
     focusInput() {
       const el = this.$refs.input
@@ -112,6 +153,13 @@ export default {
       this.startProgress()
       this.scrollToBottom()
 
+      if (this.mode === 'agent') {
+        await this.sendAgent(message)
+      } else {
+        await this.sendQuestion(message)
+      }
+    },
+    async sendQuestion(message) {
       try {
         const response = await fetch('/api/ai/chat', {
           method: 'POST',
@@ -138,6 +186,49 @@ export default {
         this.scrollToBottom()
       }
     },
+    async sendAgent(message) {
+      try {
+        const response = await fetch('/api/ai/agent', {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({
+            message,
+            capabilities: capabilities(),
+            currentFilters: this.currentFilters,
+            currentPage: this.currentPage,
+            totalPages: this.totalPages,
+          }),
+        })
+        const body = await response.json().catch(() => null)
+        const result = parseAgentResponse({
+          status: response.status,
+          ok: response.ok,
+          body,
+          retryAfter: response.headers.get('Retry-After'),
+        })
+        if (result.kind === 'command') {
+          // 명령 적용은 App.vue가 수행하고 권위 있는 요약을 agentResult로 돌려준다.
+          // 그때까지 로딩을 유지하고, 진행 표시만 정적 문구로 바꾼다.
+          this.clearProgressTimers()
+          this.loadingStatus = '요청을 처리하고 있어요…'
+          this.$emit('agent-command', result.command)
+        } else {
+          this.clearProgressTimers()
+          this.loading = false
+          this.messages.push({ role: 'assistant', text: result.text })
+          this.scrollToBottom()
+        }
+      } catch (error) {
+        this.clearProgressTimers()
+        this.loading = false
+        this.messages.push({ role: 'assistant', text: error.message || '오류가 발생했습니다.' })
+        this.scrollToBottom()
+      }
+    },
   },
 }
 </script>
@@ -159,6 +250,25 @@ export default {
         <span>NoHome AI 도우미</span>
         <button class="chat-close" type="button" aria-label="닫기" @click="toggle">✕</button>
       </header>
+
+      <div class="chat-mode" role="group" aria-label="모드 선택">
+        <button
+          type="button"
+          class="chat-mode-btn"
+          :class="{ 'is-active': mode === 'question' }"
+          :aria-pressed="mode === 'question'"
+          :disabled="loading"
+          @click="setMode('question')"
+        >질문</button>
+        <button
+          type="button"
+          class="chat-mode-btn"
+          :class="{ 'is-active': mode === 'agent' }"
+          :aria-pressed="mode === 'agent'"
+          :disabled="loading"
+          @click="setMode('agent')"
+        >실행</button>
+      </div>
 
       <div ref="scroll" class="chat-messages">
         <div
@@ -194,7 +304,7 @@ export default {
             class="chat-input"
             type="text"
             aria-describedby="chat-input-hint chat-input-counter"
-            :placeholder="loading ? '답변을 기다리는 중입니다' : '예) 마포구 2024년 3월 실거래가'"
+            :placeholder="loading ? '답변을 기다리는 중입니다' : (mode === 'agent' ? '예) 마포구 2024년 3월로 검색해줘' : '예) 마포구 2024년 3월 실거래가')"
             :disabled="loading"
           />
           <span id="chat-input-counter" class="chat-counter">{{ inputLength }}/{{ maxLength }}</span>
@@ -261,6 +371,37 @@ export default {
   color: #ffffff;
   font-size: 16px;
   cursor: pointer;
+}
+
+.chat-mode {
+  display: flex;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--surface, #ffffff);
+  border-bottom: 1px solid var(--border-soft, #d9e1e8);
+}
+
+.chat-mode-btn {
+  flex: 1;
+  border: 1px solid var(--border-soft, #d9e1e8);
+  border-radius: 999px;
+  padding: 5px 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted, #5a6678);
+  background: var(--surface-tint, #f8fafb);
+  cursor: pointer;
+}
+
+.chat-mode-btn.is-active {
+  color: #ffffff;
+  background: var(--primary-green, #1f6f5b);
+  border-color: var(--primary-green, #1f6f5b);
+}
+
+.chat-mode-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .chat-messages {
