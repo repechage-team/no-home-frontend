@@ -1,5 +1,6 @@
 ﻿<script>
 import {
+  buildHousePriceRangeRequests,
   buildHouseSearchRequests,
   emptyFilters,
   isSeoul,
@@ -8,14 +9,27 @@ import {
 } from './houseSearchParams'
 import ChatWidget from './components/ChatWidget.vue'
 
-const SEARCH_PAGE_SIZE = 10
+const SEARCH_ALL_FETCH_SIZE = 100
 const SEARCH_REQUEST_TIMEOUT_MS = 25000
 const REGION_REQUEST_TIMEOUT_MS = 10000
 const MIN_SEARCH_LOADING_MS = 600
+const DEFAULT_DEAL_MONTH = '2026-06'
+const SORT_OPTIONS = [
+  { value: 'latest', label: '최신순' },
+  { value: 'oldest', label: '오래된 순' },
+  { value: 'priceDesc', label: '높은 가격순' },
+  { value: 'priceAsc', label: '낮은 가격순' },
+]
 const DEFAULT_MAP_CENTER = {
   lat: 37.566826,
   lng: 126.9786567,
 }
+const SELECTED_MARKER_IMAGE_URL = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
+<svg xmlns="http://www.w3.org/2000/svg" width="42" height="52" viewBox="0 0 42 52">
+  <path d="M21 50C21 50 39 30 39 18C39 8.6 30.9 1 21 1C11.1 1 3 8.6 3 18C3 30 21 50 21 50Z" fill="#f04438" stroke="#ffffff" stroke-width="3"/>
+  <circle cx="21" cy="18" r="8" fill="#ffffff"/>
+</svg>
+`)}`
 const KAKAO_MAP_API_KEY = import.meta.env.VITE_KAKAO_MAP_API_KEY
 const KAKAO_MAP_SDK_ERROR_MESSAGE = 'Kakao Map SDK 로드에 실패했습니다. Kakao Developers의 Web 플랫폼 사이트 도메인에 현재 주소를 등록해 주세요.'
 let kakaoMapsSdkPromise = null
@@ -185,13 +199,20 @@ export default {
       items: [],
       totalCount: null,
       searchPage: 1,
-      pageSize: SEARCH_PAGE_SIZE,
+      resultDisplayMode: '10',
       selectedItem: null,
       loading: false,
       searchRequestId: 0,
       error: '',
       hasSearched: false,
       seoulDistricts,
+      sortOptions: SORT_OPTIONS,
+      priceRangeMin: null,
+      priceRangeMax: null,
+      priceRangeLoading: false,
+      priceRangeError: '',
+      dealMonthError: '',
+      lastStackedThumb: 'max',
       legalDongs: [],
       legalDongLoading: false,
       legalDongRequestId: 0,
@@ -219,6 +240,8 @@ export default {
       deleteConfirm: '',
       kakao: null,
       map: null,
+      defaultMarkerImage: null,
+      selectedMarkerImage: null,
       markerDisplayCount: 0,
       mapLoading: false,
       mapStatus: '吏??API ?ㅻ? ?뺤씤?섍퀬 ?덉뒿?덈떎.',
@@ -264,32 +287,49 @@ export default {
       return `${this.displayAptName(this.selectedItem)} · ${this.displayAddress(this.selectedItem)}`
     },
     totalPages() {
+      if (this.resultDisplayMode === 'all') {
+        return 1
+      }
+
       if (!this.totalCount) {
         return 1
       }
 
-      return Math.max(Math.ceil(this.totalCount / this.pageSize), 1)
+      return Math.max(Math.ceil(this.totalCount / this.currentPageSize), 1)
+    },
+    currentPageSize() {
+      const size = Number(this.resultDisplayMode)
+      return Number.isFinite(size) && size > 0 ? size : 10
     },
     canGoPreviousPage() {
-      return this.hasSearched && this.searchPage > 1 && !this.loading
+      return this.resultDisplayMode !== 'all' && this.hasSearched && this.searchPage > 1 && !this.loading
     },
     canGoNextPage() {
-      return this.hasSearched && this.searchPage < this.totalPages && !this.loading
+      return this.resultDisplayMode !== 'all' && this.hasSearched && this.searchPage < this.totalPages && !this.loading
     },
     pageSummary() {
       if (!this.hasSearched) {
         return '검색 전'
       }
 
+      if (this.resultDisplayMode === 'all') {
+        return '전체 표시'
+      }
+
       return `${this.searchPage.toLocaleString()} / ${this.totalPages.toLocaleString()} 페이지`
     },
     resultMetaLabel() {
       if (this.loading) {
-        return `조회 중 · 페이지당 ${this.pageSize}개`
+        return this.resultDisplayMode === 'all'
+          ? '조회 중 · 전체 데이터'
+          : `조회 중 · 페이지당 ${this.currentPageSize}개`
       }
 
       const count = this.totalCount ?? 0
-      return `${count.toLocaleString()}건 · 페이지당 ${this.pageSize}개`
+      if (this.resultDisplayMode === 'all') {
+        return `${this.items.length.toLocaleString()} / ${count.toLocaleString()}건 표시`
+      }
+      return `${count.toLocaleString()}건 · 페이지당 ${this.currentPageSize}개`
     },
     markerCountLabel() {
       if (!this.hasSearched) {
@@ -308,6 +348,72 @@ export default {
     legalDongDisabled() {
       return !this.selectedLawdCd || this.legalDongLoading || this.legalDongs.length === 0
     },
+    sortDisabled() {
+      return !this.filters.sido
+    },
+    priceRangeAvailable() {
+      return Number.isFinite(this.priceRangeMin)
+        && Number.isFinite(this.priceRangeMax)
+        && this.priceRangeMin <= this.priceRangeMax
+    },
+    priceSliderStep() {
+      if (!this.priceRangeAvailable) {
+        return 100
+      }
+
+      const span = this.priceRangeMax - this.priceRangeMin
+      if (span <= 10000) {
+        return 100
+      }
+      if (span <= 50000) {
+        return 500
+      }
+      return 1000
+    },
+    priceMinPercent() {
+      return this.priceThumbPercent(this.filters.minPrice)
+    },
+    priceMaxPercent() {
+      return this.priceThumbPercent(this.filters.maxPrice)
+    },
+    priceRangeSummary() {
+      if (this.priceRangeLoading) {
+        return '가격 범위를 불러오는 중입니다.'
+      }
+
+      if (this.priceRangeError) {
+        return this.priceRangeError
+      }
+
+      if (!this.priceRangeAvailable) {
+        return '전체 범위 선택으로 먼저 가격 범위를 지정할 수 있습니다.'
+      }
+
+      return `${this.displayManwon(this.priceRangeMin)} ~ ${this.displayManwon(this.priceRangeMax)}`
+    },
+    priceRangeLoadDisabled() {
+      return this.loading || this.priceRangeLoading || !this.hasPriceRangeCondition()
+    },
+    invalidPriceRange() {
+      if (!this.priceRangeAvailable) {
+        return false
+      }
+
+      const min = Number(this.filters.minPrice)
+      const max = Number(this.filters.maxPrice)
+      return !Number.isFinite(min)
+        || !Number.isFinite(max)
+        || min < this.priceRangeMin
+        || max > this.priceRangeMax
+        || min >= max
+    },
+    invalidDealMonthRange() {
+      return Boolean(
+        this.filters.startDealMonth
+          && this.filters.endDealMonth
+          && this.filters.startDealMonth > this.filters.endDealMonth
+      )
+    },
     mapStatusLabel() {
       if (this.mapError) {
         return this.mapError
@@ -325,6 +431,207 @@ export default {
   methods: {
     isSeoul,
     fieldText,
+    priceThumbPercent(value) {
+      if (!this.priceRangeAvailable || this.priceRangeMax === this.priceRangeMin) {
+        return 0
+      }
+
+      const numeric = Number(value)
+      if (!Number.isFinite(numeric)) {
+        return 0
+      }
+
+      const clamped = Math.min(Math.max(numeric, this.priceRangeMin), this.priceRangeMax)
+      return ((clamped - this.priceRangeMin) / (this.priceRangeMax - this.priceRangeMin)) * 100
+    },
+    setPriceRangeFromResults(results, { resetSelection = false } = {}) {
+      const mins = results
+        .map((payload) => Number(payload?.minDealAmountManwon))
+        .filter(Number.isFinite)
+      const maxes = results
+        .map((payload) => Number(payload?.maxDealAmountManwon))
+        .filter(Number.isFinite)
+
+      if (!mins.length || !maxes.length) {
+        return false
+      }
+
+      this.priceRangeMin = Math.min(...mins)
+      this.priceRangeMax = Math.max(...maxes)
+      if (resetSelection || this.filters.minPrice === '' || !Number.isFinite(Number(this.filters.minPrice))) {
+        this.filters.minPrice = this.priceRangeMin
+      }
+      if (resetSelection || this.filters.maxPrice === '' || !Number.isFinite(Number(this.filters.maxPrice))) {
+        this.filters.maxPrice = this.priceRangeMax
+      }
+      if (!this.invalidPriceRange) {
+        this.filters.minPrice = this.clampPrice(this.filters.minPrice, this.priceRangeMin, Number(this.filters.maxPrice))
+        this.filters.maxPrice = this.clampPrice(this.filters.maxPrice, Number(this.filters.minPrice), this.priceRangeMax)
+      }
+      this.priceRangeError = ''
+      return true
+    },
+    hasPriceRangeCondition() {
+      return Boolean(
+        this.filters.lawdCd
+          || this.filters.sido
+          || this.filters.sigungu
+          || this.filters.umdNm
+          || this.filters.aptName
+          || this.filters.startDealMonth
+          || this.filters.endDealMonth
+      )
+    },
+    clampPrice(value, min, max) {
+      const numeric = Number(value)
+      const fallback = Number.isFinite(min) ? min : 0
+      const lower = Number.isFinite(min) ? min : fallback
+      const upper = Number.isFinite(max) ? max : lower
+      if (!Number.isFinite(numeric)) {
+        return lower
+      }
+      return Math.min(Math.max(Math.trunc(numeric), lower), upper)
+    },
+    handleMinPriceInput(event) {
+      if (!this.priceRangeAvailable) {
+        return
+      }
+      this.filters.minPrice = event?.target?.value ?? ''
+      this.priceRangeError = ''
+    },
+    handleMaxPriceInput(event) {
+      if (!this.priceRangeAvailable) {
+        return
+      }
+      this.filters.maxPrice = event?.target?.value ?? ''
+      this.priceRangeError = ''
+    },
+    handleMinPriceThumbInput(event) {
+      if (!this.priceRangeAvailable) {
+        return
+      }
+      this.filters.minPrice = this.clampPrice(event?.target?.value, this.priceRangeMin, Number(this.filters.maxPrice))
+      if (Number(this.filters.minPrice) === Number(this.filters.maxPrice)) {
+        this.lastStackedThumb = 'min'
+      }
+    },
+    handleMaxPriceThumbInput(event) {
+      if (!this.priceRangeAvailable) {
+        return
+      }
+      this.filters.maxPrice = this.clampPrice(event?.target?.value, Number(this.filters.minPrice), this.priceRangeMax)
+      if (Number(this.filters.minPrice) === Number(this.filters.maxPrice)) {
+        this.lastStackedThumb = 'max'
+      }
+    },
+    handlePriceThumbPointerDown(thumb) {
+      if (Number(this.filters.minPrice) === Number(this.filters.maxPrice)) {
+        this.lastStackedThumb = thumb
+      }
+    },
+    handlePriceThumbInput(thumb, event) {
+      if (thumb === 'min') {
+        this.handleMinPriceThumbInput(event)
+      } else {
+        this.handleMaxPriceThumbInput(event)
+      }
+    },
+    resetPriceRange() {
+      if (!this.priceRangeAvailable) {
+        return
+      }
+
+      this.filters.minPrice = this.priceRangeMin
+      this.filters.maxPrice = this.priceRangeMax
+      this.lastStackedThumb = 'max'
+      if (this.hasSearched) {
+        this.searchHouses(1)
+      }
+    },
+    async fetchAllHouseSearchResults(searchFilters) {
+      const firstRequests = buildHouseSearchRequests(searchFilters, {
+        page: 1,
+        size: SEARCH_ALL_FETCH_SIZE,
+      })
+      const firstResults = await Promise.all(firstRequests.map((fields) => this.fetchHouseSearch(fields)))
+      const totalCount = firstResults.reduce((sum, payload) => {
+        if (Number.isFinite(payload.totalCount)) {
+          return sum + payload.totalCount
+        }
+        return sum + (Array.isArray(payload.items) ? payload.items.length : 0)
+      }, 0)
+      const totalPages = Math.max(Math.ceil(totalCount / SEARCH_ALL_FETCH_SIZE), 1)
+
+      if (totalPages <= 1) {
+        return firstResults
+      }
+
+      const restRequests = []
+      for (let page = 2; page <= totalPages; page += 1) {
+        buildHouseSearchRequests(searchFilters, {
+          page,
+          size: SEARCH_ALL_FETCH_SIZE,
+        }).forEach((fields) => {
+          restRequests.push({
+            ...fields,
+            autoImport: 'false',
+          })
+        })
+      }
+
+      const restResults = await Promise.all(restRequests.map((fields) => this.fetchHouseSearch(fields)))
+      return [...firstResults, ...restResults]
+    },
+    async loadPriceRange() {
+      if (this.priceRangeLoadDisabled) {
+        return
+      }
+
+      this.priceRangeLoading = true
+      this.priceRangeError = ''
+
+      try {
+        const requests = buildHousePriceRangeRequests(this.filters)
+        const results = await Promise.all(requests.map((fields) => this.fetchHousePriceRange(fields)))
+        if (!this.setPriceRangeFromResults(results, { resetSelection: true })) {
+          this.priceRangeError = '조건에 맞는 가격 범위가 없습니다.'
+        }
+      } catch (exception) {
+        this.priceRangeError = exception instanceof Error
+          ? exception.message
+          : '가격 범위를 불러오지 못했습니다.'
+      } finally {
+        this.priceRangeLoading = false
+      }
+    },
+    async searchFullPriceRange() {
+      if (this.loading || this.priceRangeLoading) {
+        return
+      }
+
+      this.normalizeDealMonthRangeForSearch()
+      if (!this.priceRangeAvailable) {
+        await this.loadPriceRange()
+      }
+
+      if (this.priceRangeAvailable) {
+        this.filters.minPrice = this.priceRangeMin
+        this.filters.maxPrice = this.priceRangeMax
+        this.lastStackedThumb = 'max'
+      }
+
+      return this.searchHouses(1)
+    },
+    normalizeDealMonthRangeForSearch() {
+      if (!this.invalidDealMonthRange) {
+        this.dealMonthError = ''
+        return
+      }
+
+      this.filters.startDealMonth = DEFAULT_DEAL_MONTH
+      this.filters.endDealMonth = DEFAULT_DEAL_MONTH
+      this.dealMonthError = '유효하지 않은 거래월 범위 입니다'
+    },
     async requestMemberApi(path, options = {}) {
       const headers = {
         Accept: 'application/json',
@@ -523,6 +830,7 @@ export default {
     },
     async searchHouses(page = 1) {
       this.loading = false
+      this.normalizeDealMonthRangeForSearch()
       const startedAt = Date.now()
       const requestId = this.searchRequestId + 1
       this.searchRequestId = requestId
@@ -538,11 +846,23 @@ export default {
       await waitForPaint()
 
       try {
-        const requests = buildHouseSearchRequests(this.filters, {
-          page: this.searchPage,
-          size: this.pageSize,
-        })
-        const results = await Promise.all(requests.map((fields) => this.fetchHouseSearch(fields)))
+        const shouldIgnorePriceRange = this.invalidPriceRange
+        const searchFilters = shouldIgnorePriceRange
+          ? {
+              ...this.filters,
+              minPrice: '',
+              maxPrice: '',
+            }
+          : this.filters
+        if (shouldIgnorePriceRange) {
+          this.priceRangeError = '유효하지 않은 가격 범위 입니다'
+        }
+        const results = this.resultDisplayMode === 'all'
+          ? await this.fetchAllHouseSearchResults(searchFilters)
+          : await Promise.all(buildHouseSearchRequests(searchFilters, {
+              page: this.searchPage,
+              size: this.currentPageSize,
+            }).map((fields) => this.fetchHouseSearch(fields)))
         if (requestId !== this.searchRequestId) {
           return
         }
@@ -552,13 +872,24 @@ export default {
         }
 
         this.items = results.flatMap((payload) => Array.isArray(payload.items) ? payload.items : [])
-        this.totalCount = results.reduce((sum, payload) => {
-          if (Number.isFinite(payload.totalCount)) {
-            return sum + payload.totalCount
-          }
+        this.totalCount = this.resultDisplayMode === 'all'
+          ? results.reduce((max, payload) => {
+              if (Number.isFinite(payload.totalCount)) {
+                return Math.max(max, payload.totalCount)
+              }
+              return max
+            }, this.items.length)
+          : results.reduce((sum, payload) => {
+              if (Number.isFinite(payload.totalCount)) {
+                return sum + payload.totalCount
+              }
 
-          return sum + (Array.isArray(payload.items) ? payload.items.length : 0)
-        }, 0)
+              return sum + (Array.isArray(payload.items) ? payload.items.length : 0)
+            }, 0)
+        this.setPriceRangeFromResults(results)
+        if (shouldIgnorePriceRange) {
+          this.priceRangeError = '유효하지 않은 가격 범위 입니다'
+        }
         this.loading = false
         this.$nextTick(() => {
           this.refreshMapMarkers()
@@ -602,11 +933,33 @@ export default {
 
       return body?.data ?? body ?? {}
     },
+    async fetchHousePriceRange(fields) {
+      const params = new URLSearchParams()
+
+      Object.entries(fields).forEach(([key, value]) => {
+        if (value) {
+          params.set(key, value)
+        }
+      })
+
+      const query = params.toString()
+      const response = await fetchWithTimeout(`/api/houses/price-range${query ? `?${query}` : ''}`)
+      const body = await response.json().catch(() => null)
+
+      if (!response.ok || body?.success === false) {
+        throw new Error(body?.message || `가격 범위 요청 실패 (${response.status})`)
+      }
+
+      return body?.data ?? body ?? {}
+    },
     handleSidoChange(event) {
       this.filters.sido = event?.target?.value ?? this.filters.sido
       this.searchRequestId += 1
       this.loading = false
       this.filters.umdNm = ''
+      if (!this.filters.sido) {
+        this.filters.sort = 'latest'
+      }
       this.legalDongs = []
       this.legalDongError = ''
       if (!isSeoul(this.filters.sido)) {
@@ -692,6 +1045,12 @@ export default {
       this.legalDongError = ''
       this.items = []
       this.totalCount = null
+      this.priceRangeMin = null
+      this.priceRangeMax = null
+      this.priceRangeLoading = false
+      this.priceRangeError = ''
+      this.dealMonthError = ''
+      this.lastStackedThumb = 'max'
       this.searchPage = 1
       this.selectedItem = null
       this.loading = false
@@ -702,12 +1061,13 @@ export default {
     selectItem(item) {
       this.selectedItem = item
       this.$nextTick(() => {
-        this.renderMapMarkers()
+        this.updateSelectedMarker()
         this.focusMapItem(item)
       })
     },
     backToList() {
       this.selectedItem = null
+      this.updateSelectedMarker()
     },
     searchFirstPage(event) {
       event?.preventDefault?.()
@@ -733,8 +1093,37 @@ export default {
       return address || '-'
     },
     displayDealAmount(item) {
-      const amount = fieldText(item?.dealAmount, '-')
-      return amount === '-' ? amount : `${amount}만`
+      const amount = Number(item?.dealAmountManwon ?? String(item?.dealAmount ?? '').replace(/,/g, ''))
+      return this.displayKoreanPrice(amount)
+    },
+    displayManwon(value) {
+      const numeric = Number(value)
+      if (!Number.isFinite(numeric)) {
+        return '-'
+      }
+      return this.displayKoreanPrice(numeric)
+    },
+    displayKoreanPrice(value) {
+      const numeric = Number(value)
+      if (!Number.isFinite(numeric)) {
+        return '-'
+      }
+
+      const manwon = Math.trunc(numeric)
+      if (manwon < 10000) {
+        return `${manwon.toLocaleString()}만`
+      }
+
+      const eok = Math.floor(manwon / 10000)
+      const remainder = manwon % 10000
+      const parts = []
+
+      parts.push(`${eok.toLocaleString()}억`)
+      if (remainder > 0) {
+        parts.push(`${remainder.toLocaleString()}만`)
+      }
+
+      return parts.join(' ')
     },
     displayArea(item) {
       return item?.excluUseAr ? `${item.excluUseAr}㎡` : '-'
@@ -889,12 +1278,23 @@ export default {
         return
       }
 
+      if (!this.selectedMarkerImage) {
+        this.selectedMarkerImage = new this.kakao.maps.MarkerImage(
+          SELECTED_MARKER_IMAGE_URL,
+          new this.kakao.maps.Size(42, 52),
+          { offset: new this.kakao.maps.Point(21, 52) }
+        )
+      }
+
       const bounds = new this.kakao.maps.LatLngBounds()
       successfulItems.forEach(({ item, position }) => {
         const marker = new this.kakao.maps.Marker({
           map: this.map,
           position,
         })
+        if (!this.defaultMarkerImage && typeof marker.getImage === 'function') {
+          this.defaultMarkerImage = marker.getImage()
+        }
         this.kakao.maps.event.addListener(marker, 'click', () => {
           this.selectItem(item)
         })
@@ -902,6 +1302,7 @@ export default {
         this.mapMarkers.push(marker)
         this.mapMarkerItems.push(item)
       })
+      this.updateSelectedMarker()
 
       if (this.mapMarkers.length > 1) {
         this.relayoutMap()
@@ -913,6 +1314,18 @@ export default {
       } else {
         this.relayoutMap()
       }
+    },
+    updateSelectedMarker() {
+      if (!this.kakao || !this.selectedMarkerImage || !this.mapMarkers.length) {
+        return
+      }
+
+      const selectedKey = this.selectedItem ? this.itemKey(this.selectedItem) : ''
+      this.mapMarkers.forEach((marker, index) => {
+        const isSelected = selectedKey && this.itemKey(this.mapMarkerItems[index]) === selectedKey
+        marker.setImage(isSelected ? this.selectedMarkerImage : this.defaultMarkerImage)
+        marker.setZIndex(isSelected ? 10 : 1)
+      })
     },
     geocodeItem(geocoder, item) {
       const address = this.mapAddress(item)
@@ -1053,9 +1466,31 @@ export default {
             <label><span>시군구</span><select v-model="filters.sigungu" name="sigungu" :disabled="!isSeoul(filters.sido)" @change="handleSigunguChange"><option value="">서울 전체</option><option v-for="district in seoulDistricts" :key="district" :value="district">{{ district }}</option></select></label>
             <label><span>읍면동</span><select :key="selectedLawdCd || 'no-lawd'" v-model="filters.umdNm" name="umdNm" :disabled="legalDongDisabled"><option value="">{{ legalDongLoading ? '동 목록 불러오는 중' : '전체 동' }}</option><option v-for="dong in legalDongs" :key="dong.value" :value="dong.value">{{ dong.label }}</option></select></label>
             <label><span>아파트명</span><input v-model.trim="filters.aptName" name="aptName" type="text" autocomplete="off" placeholder="래미안" /></label>
-            <label><span>거래월</span><input v-model="filters.dealMonth" name="dealMonth" type="month" /></label>
+            <label><span>시작월</span><input v-model="filters.startDealMonth" name="startDealMonth" type="month" /></label>
+            <label><span>종료월</span><input v-model="filters.endDealMonth" name="endDealMonth" type="month" /></label>
+            <label><span>정렬</span><select v-model="filters.sort" name="sort" :disabled="sortDisabled"><option v-for="option in sortOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
+            <label><span>표시 방식</span><select v-model="resultDisplayMode" name="resultDisplayMode"><option value="5">5개씩 보기</option><option value="10">10개씩 보기</option><option value="20">20개씩 보기</option><option value="all">전체 보기</option></select></label>
+          </div>
+          <div class="price-filter" :class="{ 'is-disabled': !priceRangeAvailable }">
+            <div class="price-filter-header">
+              <span>가격 구간</span>
+              <strong>{{ priceRangeSummary }}</strong>
+            </div>
+            <div class="price-input-grid">
+              <label><span>최소 실거래가</span><input :value="filters.minPrice" type="number" inputmode="numeric" min="0" step="100" :disabled="!priceRangeAvailable" @input="handleMinPriceInput" /></label>
+              <label><span>최대 실거래가</span><input :value="filters.maxPrice" type="number" inputmode="numeric" min="0" step="100" :disabled="!priceRangeAvailable" @input="handleMaxPriceInput" /></label>
+            </div>
+            <div class="range-control" :style="{ '--range-min': `${priceMinPercent}%`, '--range-max': `${priceMaxPercent}%` }">
+              <div class="range-track" aria-hidden="true"></div>
+              <input class="range-thumb" :class="{ 'is-stacked': lastStackedThumb === 'min' }" :value="filters.minPrice" type="range" :min="priceRangeMin ?? 0" :max="priceRangeMax ?? 0" :step="priceSliderStep" :disabled="!priceRangeAvailable" aria-label="최소 실거래가" @pointerdown="handlePriceThumbPointerDown('min')" @input="handlePriceThumbInput('min', $event)" />
+              <input class="range-thumb" :class="{ 'is-stacked': lastStackedThumb === 'max' }" :value="filters.maxPrice" type="range" :min="priceRangeMin ?? 0" :max="priceRangeMax ?? 0" :step="priceSliderStep" :disabled="!priceRangeAvailable" aria-label="최대 실거래가" @pointerdown="handlePriceThumbPointerDown('max')" @input="handlePriceThumbInput('max', $event)" />
+            </div>
+            <div class="price-filter-actions">
+              <button class="secondary-button compact-button" type="button" :disabled="loading || priceRangeLoading || !hasPriceRangeCondition()" @click="searchFullPriceRange">{{ priceRangeLoading ? '조회 중' : '전체 조회' }}</button>
+            </div>
           </div>
           <p v-if="legalDongError" class="inline-error">{{ legalDongError }}</p>
+          <p v-if="dealMonthError" class="inline-error">{{ dealMonthError }}</p>
 
           <div class="actions">
             <button class="primary-button" :class="{ 'is-loading': loading }" type="button" :aria-busy="loading ? 'true' : 'false'" @click="searchFirstPage">
@@ -1109,6 +1544,18 @@ export default {
         <div class="map-surface">
           <div ref="mapCanvas" v-once class="map-canvas" aria-label="Kakao 지도"></div>
           <div v-if="!mapReady" class="map-grid" aria-hidden="true"></div>
+          <div v-if="selectedItem" class="map-detail-panel">
+            <button class="map-detail-close" type="button" aria-label="상세 닫기" @click="backToList">×</button>
+            <strong>{{ displayAptName(selectedItem) }}</strong>
+            <span class="map-detail-price">{{ displayDealAmount(selectedItem) }}</span>
+            <dl>
+              <div><dt>거래일</dt><dd>{{ displayDealDate(selectedItem) }}</dd></div>
+              <div><dt>주소</dt><dd>{{ displayRegion(selectedItem) }} {{ displayAddress(selectedItem) }}</dd></div>
+              <div><dt>전용면적</dt><dd>{{ displayArea(selectedItem) }}</dd></div>
+              <div><dt>층</dt><dd>{{ displayFloor(selectedItem) }}</dd></div>
+              <div><dt>건축연도</dt><dd>{{ displayBuildYear(selectedItem) }}</dd></div>
+            </dl>
+          </div>
         </div>
       </aside>
     </main>
