@@ -14,6 +14,7 @@ import ChatWidget from './components/ChatWidget.vue'
 
 const SEARCH_ALL_FETCH_SIZE = 100
 const SEARCH_REQUEST_TIMEOUT_MS = 25000
+const AUTO_IMPORT_REQUEST_TIMEOUT_MS = SEARCH_REQUEST_TIMEOUT_MS
 const REGION_REQUEST_TIMEOUT_MS = 10000
 const MIN_SEARCH_LOADING_MS = 600
 const DEFAULT_DEAL_MONTH = '2026-06'
@@ -188,6 +189,10 @@ const fetchWithTimeout = async (url, options = {}, timeoutMs = SEARCH_REQUEST_TI
   } finally {
     window.clearTimeout(timeoutId)
   }
+}
+
+const houseRequestTimeoutMs = (fields = {}) => {
+  return fields.autoImport === 'true' ? AUTO_IMPORT_REQUEST_TIMEOUT_MS : SEARCH_REQUEST_TIMEOUT_MS
 }
 
 const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms))
@@ -1186,7 +1191,11 @@ export default {
       })
 
       const query = params.toString()
-      const response = await fetchWithTimeout(`/api/houses/search${query ? `?${query}` : ''}`)
+      const response = await fetchWithTimeout(
+        `/api/houses/search${query ? `?${query}` : ''}`,
+        {},
+        houseRequestTimeoutMs(fields)
+      )
       const body = await response.json().catch(() => null)
 
       if (!response.ok || body?.success === false) {
@@ -1205,7 +1214,11 @@ export default {
       })
 
       const query = params.toString()
-      const response = await fetchWithTimeout(`/api/houses/price-range${query ? `?${query}` : ''}`)
+      const response = await fetchWithTimeout(
+        `/api/houses/price-range${query ? `?${query}` : ''}`,
+        {},
+        houseRequestTimeoutMs(fields)
+      )
       const body = await response.json().catch(() => null)
 
       if (!response.ok || body?.success === false) {
@@ -1607,7 +1620,7 @@ export default {
       return '주소 기반 검색'
     },
     itemKey(item) {
-      return item?.dealId ?? `${item?.houseId ?? 'house'}-${item?.dealDate ?? 'date'}-${item?.floor ?? 'floor'}`
+      return item?.resultKey ?? item?.apiRowHash ?? item?.dealId ?? `${item?.houseId ?? 'house'}-${item?.dealDate ?? 'date'}-${item?.floor ?? 'floor'}`
     },
     mapAddress(item) {
       if (item?.roadnm) {
