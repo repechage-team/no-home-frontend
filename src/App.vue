@@ -7,6 +7,7 @@ import {
   isSeoul,
   seoulLawdCodes,
   seoulDistricts,
+  sortOptionsForDealMode,
 } from './houseSearchParams'
 import { resolvePaginateTarget, resolveItemTarget } from './chat/agentActions'
 import ChatWidget from './components/ChatWidget.vue'
@@ -21,6 +22,19 @@ const SORT_OPTIONS = [
   { value: 'oldest', label: '오래된 순' },
   { value: 'priceDesc', label: '높은 가격순' },
   { value: 'priceAsc', label: '낮은 가격순' },
+  { value: 'areaDesc', label: '전용면적 넓은순' },
+  { value: 'areaAsc', label: '전용면적 좁은순' },
+  { value: 'depositDesc', label: '보증금 높은순' },
+  { value: 'depositAsc', label: '보증금 낮은순' },
+  { value: 'monthlyRentDesc', label: '월세 높은순' },
+  { value: 'monthlyRentAsc', label: '월세 낮은순' },
+]
+const DEAL_MODE_OPTIONS = [
+  { value: 'sale', label: '매매' },
+  { value: 'jeonse', label: '전세' },
+  { value: 'monthly', label: '월세' },
+  { value: 'rent', label: '전월세' },
+  { value: 'all', label: '전체' },
 ]
 const DEFAULT_MAP_CENTER = {
   lat: 37.566826,
@@ -209,12 +223,17 @@ export default {
       hasSearched: false,
       seoulDistricts,
       sortOptions: SORT_OPTIONS,
+      dealModeOptions: DEAL_MODE_OPTIONS,
       priceRangeMin: null,
       priceRangeMax: null,
+      monthlyRentRangeMin: null,
+      monthlyRentRangeMax: null,
       priceRangeLoading: false,
       priceRangeError: '',
+      regionError: '',
       dealMonthError: '',
       lastStackedThumb: 'max',
+      lastMonthlyRentStackedThumb: 'max',
       legalDongs: [],
       legalDongLoading: false,
       legalDongRequestId: 0,
@@ -363,10 +382,38 @@ export default {
     sortDisabled() {
       return !this.filters.sido
     },
+    activeSortOptions() {
+      const allowed = sortOptionsForDealMode(this.filters.dealMode)
+      return this.sortOptions.filter((option) => allowed.includes(option.value))
+    },
+    priceFilterVisible() {
+      return ['sale', 'jeonse', 'monthly'].includes(this.filters.dealMode)
+    },
+    priceFilterTitle() {
+      if (this.filters.dealMode === 'jeonse') {
+        return '보증금 구간'
+      }
+      if (this.filters.dealMode === 'monthly') {
+        return '보증금/월세 구간'
+      }
+      return '가격 구간'
+    },
+    activeMinPriceKey() {
+      return this.filters.dealMode === 'sale' ? 'minPrice' : 'minDeposit'
+    },
+    activeMaxPriceKey() {
+      return this.filters.dealMode === 'sale' ? 'maxPrice' : 'maxDeposit'
+    },
     priceRangeAvailable() {
       return Number.isFinite(this.priceRangeMin)
         && Number.isFinite(this.priceRangeMax)
         && this.priceRangeMin <= this.priceRangeMax
+    },
+    monthlyRentRangeAvailable() {
+      return this.filters.dealMode === 'monthly'
+        && Number.isFinite(this.monthlyRentRangeMin)
+        && Number.isFinite(this.monthlyRentRangeMax)
+        && this.monthlyRentRangeMin <= this.monthlyRentRangeMax
     },
     priceSliderStep() {
       if (!this.priceRangeAvailable) {
@@ -383,10 +430,16 @@ export default {
       return 1000
     },
     priceMinPercent() {
-      return this.priceThumbPercent(this.filters.minPrice)
+      return this.priceThumbPercent(this.filters[this.activeMinPriceKey])
     },
     priceMaxPercent() {
-      return this.priceThumbPercent(this.filters.maxPrice)
+      return this.priceThumbPercent(this.filters[this.activeMaxPriceKey])
+    },
+    monthlyRentMinPercent() {
+      return this.monthlyRentThumbPercent(this.filters.minMonthlyRent)
+    },
+    monthlyRentMaxPercent() {
+      return this.monthlyRentThumbPercent(this.filters.maxMonthlyRent)
     },
     priceRangeSummary() {
       if (this.priceRangeLoading) {
@@ -403,20 +456,44 @@ export default {
 
       return `${this.displayManwon(this.priceRangeMin)} ~ ${this.displayManwon(this.priceRangeMax)}`
     },
+    monthlyRentRangeSummary() {
+      if (this.priceRangeLoading) {
+        return '월세 범위를 불러오는 중입니다.'
+      }
+
+      if (!this.monthlyRentRangeAvailable) {
+        return '전체 범위 선택으로 먼저 월세 범위를 지정할 수 있습니다.'
+      }
+
+      return `${this.displayManwon(this.monthlyRentRangeMin)} ~ ${this.displayManwon(this.monthlyRentRangeMax)}`
+    },
     priceRangeLoadDisabled() {
-      return this.loading || this.priceRangeLoading || !this.hasPriceRangeCondition()
+      return this.loading || this.priceRangeLoading || this.invalidRegionSelection || !this.hasPriceRangeCondition()
     },
     invalidPriceRange() {
       if (!this.priceRangeAvailable) {
         return false
       }
 
-      const min = Number(this.filters.minPrice)
-      const max = Number(this.filters.maxPrice)
+      const min = Number(this.filters[this.activeMinPriceKey])
+      const max = Number(this.filters[this.activeMaxPriceKey])
       return !Number.isFinite(min)
         || !Number.isFinite(max)
         || min < this.priceRangeMin
         || max > this.priceRangeMax
+        || min >= max
+    },
+    invalidMonthlyRentRange() {
+      if (!this.monthlyRentRangeAvailable) {
+        return false
+      }
+
+      const min = Number(this.filters.minMonthlyRent)
+      const max = Number(this.filters.maxMonthlyRent)
+      return !Number.isFinite(min)
+        || !Number.isFinite(max)
+        || min < this.monthlyRentRangeMin
+        || max > this.monthlyRentRangeMax
         || min >= max
     },
     invalidDealMonthRange() {
@@ -425,6 +502,9 @@ export default {
           && this.filters.endDealMonth
           && this.filters.startDealMonth > this.filters.endDealMonth
       )
+    },
+    invalidRegionSelection() {
+      return isSeoul(this.filters.sido) && !this.filters.sigungu
     },
     mapStatusLabel() {
       if (this.mapError) {
@@ -443,6 +523,23 @@ export default {
   methods: {
     isSeoul,
     fieldText,
+    handleDealModeChange() {
+      const allowed = sortOptionsForDealMode(this.filters.dealMode)
+      if (!allowed.includes(this.filters.sort)) {
+        this.filters.sort = 'latest'
+      }
+      this.priceRangeMin = null
+      this.priceRangeMax = null
+      this.monthlyRentRangeMin = null
+      this.monthlyRentRangeMax = null
+      this.priceRangeError = ''
+      this.filters.minPrice = ''
+      this.filters.maxPrice = ''
+      this.filters.minDeposit = ''
+      this.filters.maxDeposit = ''
+      this.filters.minMonthlyRent = ''
+      this.filters.maxMonthlyRent = ''
+    },
     priceThumbPercent(value) {
       if (!this.priceRangeAvailable || this.priceRangeMax === this.priceRangeMin) {
         return 0
@@ -456,12 +553,29 @@ export default {
       const clamped = Math.min(Math.max(numeric, this.priceRangeMin), this.priceRangeMax)
       return ((clamped - this.priceRangeMin) / (this.priceRangeMax - this.priceRangeMin)) * 100
     },
+    monthlyRentThumbPercent(value) {
+      if (!this.monthlyRentRangeAvailable || this.monthlyRentRangeMax === this.monthlyRentRangeMin) {
+        return 0
+      }
+
+      const numeric = Number(value)
+      if (!Number.isFinite(numeric)) {
+        return 0
+      }
+
+      const clamped = Math.min(Math.max(numeric, this.monthlyRentRangeMin), this.monthlyRentRangeMax)
+      return ((clamped - this.monthlyRentRangeMin) / (this.monthlyRentRangeMax - this.monthlyRentRangeMin)) * 100
+    },
     setPriceRangeFromResults(results, { resetSelection = false } = {}) {
+      const minField = this.filters.dealMode === 'sale' ? 'minDealAmountManwon' : 'minDepositManwon'
+      const maxField = this.filters.dealMode === 'sale' ? 'maxDealAmountManwon' : 'maxDepositManwon'
+      const filterMinKey = this.activeMinPriceKey
+      const filterMaxKey = this.activeMaxPriceKey
       const mins = results
-        .map((payload) => Number(payload?.minDealAmountManwon))
+        .map((payload) => Number(payload?.[minField]))
         .filter(Number.isFinite)
       const maxes = results
-        .map((payload) => Number(payload?.maxDealAmountManwon))
+        .map((payload) => Number(payload?.[maxField]))
         .filter(Number.isFinite)
 
       if (!mins.length || !maxes.length) {
@@ -470,15 +584,44 @@ export default {
 
       this.priceRangeMin = Math.min(...mins)
       this.priceRangeMax = Math.max(...maxes)
-      if (resetSelection || this.filters.minPrice === '' || !Number.isFinite(Number(this.filters.minPrice))) {
-        this.filters.minPrice = this.priceRangeMin
+      if (resetSelection || this.filters[filterMinKey] === '' || !Number.isFinite(Number(this.filters[filterMinKey]))) {
+        this.filters[filterMinKey] = this.priceRangeMin
       }
-      if (resetSelection || this.filters.maxPrice === '' || !Number.isFinite(Number(this.filters.maxPrice))) {
-        this.filters.maxPrice = this.priceRangeMax
+      if (resetSelection || this.filters[filterMaxKey] === '' || !Number.isFinite(Number(this.filters[filterMaxKey]))) {
+        this.filters[filterMaxKey] = this.priceRangeMax
       }
       if (!this.invalidPriceRange) {
-        this.filters.minPrice = this.clampPrice(this.filters.minPrice, this.priceRangeMin, Number(this.filters.maxPrice))
-        this.filters.maxPrice = this.clampPrice(this.filters.maxPrice, Number(this.filters.minPrice), this.priceRangeMax)
+        this.filters[filterMinKey] = this.clampPrice(this.filters[filterMinKey], this.priceRangeMin, Number(this.filters[filterMaxKey]))
+        this.filters[filterMaxKey] = this.clampPrice(this.filters[filterMaxKey], Number(this.filters[filterMinKey]), this.priceRangeMax)
+      }
+
+      if (this.filters.dealMode === 'monthly') {
+        const monthlyMins = results
+          .map((payload) => Number(payload?.minMonthlyRentManwon))
+          .filter(Number.isFinite)
+        const monthlyMaxes = results
+          .map((payload) => Number(payload?.maxMonthlyRentManwon))
+          .filter(Number.isFinite)
+        if (!monthlyMins.length || !monthlyMaxes.length) {
+          this.monthlyRentRangeMin = null
+          this.monthlyRentRangeMax = null
+          return false
+        }
+        this.monthlyRentRangeMin = Math.min(...monthlyMins)
+        this.monthlyRentRangeMax = Math.max(...monthlyMaxes)
+        if (resetSelection || this.filters.minMonthlyRent === '' || !Number.isFinite(Number(this.filters.minMonthlyRent))) {
+          this.filters.minMonthlyRent = this.monthlyRentRangeMin
+        }
+        if (resetSelection || this.filters.maxMonthlyRent === '' || !Number.isFinite(Number(this.filters.maxMonthlyRent))) {
+          this.filters.maxMonthlyRent = this.monthlyRentRangeMax
+        }
+        if (!this.invalidMonthlyRentRange) {
+          this.filters.minMonthlyRent = this.clampPrice(this.filters.minMonthlyRent, this.monthlyRentRangeMin, Number(this.filters.maxMonthlyRent))
+          this.filters.maxMonthlyRent = this.clampPrice(this.filters.maxMonthlyRent, Number(this.filters.minMonthlyRent), this.monthlyRentRangeMax)
+        }
+      } else {
+        this.monthlyRentRangeMin = null
+        this.monthlyRentRangeMax = null
       }
       this.priceRangeError = ''
       return true
@@ -508,22 +651,22 @@ export default {
       if (!this.priceRangeAvailable) {
         return
       }
-      this.filters.minPrice = event?.target?.value ?? ''
+      this.filters[this.activeMinPriceKey] = event?.target?.value ?? ''
       this.priceRangeError = ''
     },
     handleMaxPriceInput(event) {
       if (!this.priceRangeAvailable) {
         return
       }
-      this.filters.maxPrice = event?.target?.value ?? ''
+      this.filters[this.activeMaxPriceKey] = event?.target?.value ?? ''
       this.priceRangeError = ''
     },
     handleMinPriceThumbInput(event) {
       if (!this.priceRangeAvailable) {
         return
       }
-      this.filters.minPrice = this.clampPrice(event?.target?.value, this.priceRangeMin, Number(this.filters.maxPrice))
-      if (Number(this.filters.minPrice) === Number(this.filters.maxPrice)) {
+      this.filters[this.activeMinPriceKey] = this.clampPrice(event?.target?.value, this.priceRangeMin, Number(this.filters[this.activeMaxPriceKey]))
+      if (Number(this.filters[this.activeMinPriceKey]) === Number(this.filters[this.activeMaxPriceKey])) {
         this.lastStackedThumb = 'min'
       }
     },
@@ -531,13 +674,13 @@ export default {
       if (!this.priceRangeAvailable) {
         return
       }
-      this.filters.maxPrice = this.clampPrice(event?.target?.value, Number(this.filters.minPrice), this.priceRangeMax)
-      if (Number(this.filters.minPrice) === Number(this.filters.maxPrice)) {
+      this.filters[this.activeMaxPriceKey] = this.clampPrice(event?.target?.value, Number(this.filters[this.activeMinPriceKey]), this.priceRangeMax)
+      if (Number(this.filters[this.activeMinPriceKey]) === Number(this.filters[this.activeMaxPriceKey])) {
         this.lastStackedThumb = 'max'
       }
     },
     handlePriceThumbPointerDown(thumb) {
-      if (Number(this.filters.minPrice) === Number(this.filters.maxPrice)) {
+      if (Number(this.filters[this.activeMinPriceKey]) === Number(this.filters[this.activeMaxPriceKey])) {
         this.lastStackedThumb = thumb
       }
     },
@@ -548,13 +691,41 @@ export default {
         this.handleMaxPriceThumbInput(event)
       }
     },
+    handleMonthlyRentThumbPointerDown(thumb) {
+      if (Number(this.filters.minMonthlyRent) === Number(this.filters.maxMonthlyRent)) {
+        this.lastMonthlyRentStackedThumb = thumb
+      }
+    },
+    handleMonthlyRentThumbInput(thumb, event) {
+      if (!this.monthlyRentRangeAvailable) {
+        return
+      }
+
+      if (thumb === 'min') {
+        this.filters.minMonthlyRent = this.clampPrice(event?.target?.value, this.monthlyRentRangeMin, Number(this.filters.maxMonthlyRent))
+        if (Number(this.filters.minMonthlyRent) === Number(this.filters.maxMonthlyRent)) {
+          this.lastMonthlyRentStackedThumb = 'min'
+        }
+        return
+      }
+
+      this.filters.maxMonthlyRent = this.clampPrice(event?.target?.value, Number(this.filters.minMonthlyRent), this.monthlyRentRangeMax)
+      if (Number(this.filters.minMonthlyRent) === Number(this.filters.maxMonthlyRent)) {
+        this.lastMonthlyRentStackedThumb = 'max'
+      }
+    },
     resetPriceRange() {
       if (!this.priceRangeAvailable) {
         return
       }
 
-      this.filters.minPrice = this.priceRangeMin
-      this.filters.maxPrice = this.priceRangeMax
+      this.filters[this.activeMinPriceKey] = this.priceRangeMin
+      this.filters[this.activeMaxPriceKey] = this.priceRangeMax
+      if (this.monthlyRentRangeAvailable) {
+        this.filters.minMonthlyRent = this.monthlyRentRangeMin
+        this.filters.maxMonthlyRent = this.monthlyRentRangeMax
+        this.lastMonthlyRentStackedThumb = 'max'
+      }
       this.lastStackedThumb = 'max'
       if (this.hasSearched) {
         this.searchHouses(1)
@@ -595,6 +766,9 @@ export default {
       return [...firstResults, ...restResults]
     },
     async loadPriceRange() {
+      if (!this.validateRegionForSearch()) {
+        return
+      }
       if (this.priceRangeLoadDisabled) {
         return
       }
@@ -620,6 +794,9 @@ export default {
       if (this.loading || this.priceRangeLoading) {
         return
       }
+      if (!this.validateRegionForSearch()) {
+        return
+      }
 
       this.normalizeDealMonthRangeForSearch()
       if (!this.priceRangeAvailable) {
@@ -627,9 +804,14 @@ export default {
       }
 
       if (this.priceRangeAvailable) {
-        this.filters.minPrice = this.priceRangeMin
-        this.filters.maxPrice = this.priceRangeMax
+        this.filters[this.activeMinPriceKey] = this.priceRangeMin
+        this.filters[this.activeMaxPriceKey] = this.priceRangeMax
         this.lastStackedThumb = 'max'
+      }
+      if (this.monthlyRentRangeAvailable) {
+        this.filters.minMonthlyRent = this.monthlyRentRangeMin
+        this.filters.maxMonthlyRent = this.monthlyRentRangeMax
+        this.lastMonthlyRentStackedThumb = 'max'
       }
 
       return this.searchHouses(1)
@@ -643,6 +825,15 @@ export default {
       this.filters.startDealMonth = DEFAULT_DEAL_MONTH
       this.filters.endDealMonth = DEFAULT_DEAL_MONTH
       this.dealMonthError = '유효하지 않은 거래월 범위 입니다'
+    },
+    validateRegionForSearch() {
+      if (!this.invalidRegionSelection) {
+        this.regionError = ''
+        return true
+      }
+
+      this.regionError = '서울특별시를 선택한 경우 시군구를 선택해 주세요.'
+      return false
     },
     async requestMemberApi(path, options = {}) {
       const headers = {
@@ -893,6 +1084,9 @@ export default {
       }
     },
     async searchHouses(page = 1) {
+      if (!this.validateRegionForSearch()) {
+        return
+      }
       this.loading = false
       this.normalizeDealMonthRangeForSearch()
       const startedAt = Date.now()
@@ -910,12 +1104,16 @@ export default {
       await waitForPaint()
 
       try {
-        const shouldIgnorePriceRange = this.invalidPriceRange
+        const shouldIgnorePriceRange = this.invalidPriceRange || this.invalidMonthlyRentRange
         const searchFilters = shouldIgnorePriceRange
           ? {
               ...this.filters,
               minPrice: '',
               maxPrice: '',
+              minDeposit: '',
+              maxDeposit: '',
+              minMonthlyRent: '',
+              maxMonthlyRent: '',
             }
           : this.filters
         if (shouldIgnorePriceRange) {
@@ -1018,6 +1216,7 @@ export default {
     },
     handleSidoChange(event) {
       this.filters.sido = event?.target?.value ?? this.filters.sido
+      this.regionError = ''
       this.searchRequestId += 1
       this.loading = false
       this.filters.umdNm = ''
@@ -1033,6 +1232,7 @@ export default {
     },
     handleSigunguChange(event) {
       this.filters.sigungu = event?.target?.value ?? this.filters.sigungu
+      this.regionError = ''
       this.searchRequestId += 1
       this.loading = false
       this.filters.umdNm = ''
@@ -1273,10 +1473,14 @@ export default {
       this.totalCount = null
       this.priceRangeMin = null
       this.priceRangeMax = null
+      this.monthlyRentRangeMin = null
+      this.monthlyRentRangeMax = null
       this.priceRangeLoading = false
       this.priceRangeError = ''
+      this.regionError = ''
       this.dealMonthError = ''
       this.lastStackedThumb = 'max'
+      this.lastMonthlyRentStackedThumb = 'max'
       this.searchPage = 1
       this.selectedItem = null
       this.loading = false
@@ -1313,14 +1517,33 @@ export default {
       return fieldText(item?.aptNm, '아파트명 없음')
     },
     displayAddress(item) {
+      if (item?.roadnm) {
+        return fieldText(item.roadnm)
+      }
       const dong = fieldText(item?.umdNm, '')
       const jibun = fieldText(item?.jibun, '')
       const address = [dong, jibun].filter(Boolean).join(' ')
       return address || '-'
     },
     displayDealAmount(item) {
+      if (item?.dealType === 'jeonse' || item?.dealType === 'monthly') {
+        const deposit = this.displayManwon(item?.depositManwon ?? String(item?.deposit ?? '').replace(/,/g, ''))
+        if (item?.dealType === 'monthly') {
+          return `보증금 ${deposit} / 월세 ${this.displayManwon(item?.monthlyRentManwon ?? item?.monthlyRent)}`
+        }
+        return `보증금 ${deposit}`
+      }
       const amount = Number(item?.dealAmountManwon ?? String(item?.dealAmount ?? '').replace(/,/g, ''))
       return this.displayKoreanPrice(amount)
+    },
+    displayDealType(item) {
+      if (item?.dealType === 'jeonse') {
+        return '전세'
+      }
+      if (item?.dealType === 'monthly') {
+        return '월세'
+      }
+      return '매매'
     },
     displayManwon(value) {
       const numeric = Number(value)
@@ -1387,6 +1610,13 @@ export default {
       return item?.dealId ?? `${item?.houseId ?? 'house'}-${item?.dealDate ?? 'date'}-${item?.floor ?? 'floor'}`
     },
     mapAddress(item) {
+      if (item?.roadnm) {
+        return [
+          fieldText(item?.sido, ''),
+          fieldText(item?.sigungu, ''),
+          fieldText(item?.roadnm, ''),
+        ].filter(Boolean).join(' ')
+      }
       return [
         fieldText(item?.sido, ''),
         fieldText(item?.sigungu, ''),
@@ -1711,34 +1941,79 @@ export default {
             <span class="result-count">{{ visibleCountLabel }}</span>
           </div>
 
+          <div class="deal-mode-tabs" role="radiogroup" aria-label="거래 유형">
+            <button
+              v-for="option in dealModeOptions"
+              :key="option.value"
+              type="button"
+              class="deal-mode-button"
+              :class="{ 'is-active': filters.dealMode === option.value }"
+              :aria-pressed="filters.dealMode === option.value ? 'true' : 'false'"
+              @click="filters.dealMode = option.value; handleDealModeChange()"
+            >
+              {{ option.label }}
+            </button>
+          </div>
+
           <div class="field-grid">
             <label><span>시도</span><select v-model="filters.sido" name="sido" @change="handleSidoChange"><option value="">전체/선택 안 함</option><option value="서울특별시">서울특별시</option></select></label>
-            <label><span>시군구</span><select v-model="filters.sigungu" name="sigungu" :disabled="!isSeoul(filters.sido)" @change="handleSigunguChange"><option value="">서울 전체</option><option v-for="district in seoulDistricts" :key="district" :value="district">{{ district }}</option></select></label>
+            <label><span>시군구</span><select v-model="filters.sigungu" name="sigungu" :disabled="!isSeoul(filters.sido)" @change="handleSigunguChange"><option value="" disabled>시군구 선택</option><option v-for="district in seoulDistricts" :key="district" :value="district">{{ district }}</option></select></label>
             <label><span>읍면동</span><select :key="selectedLawdCd || 'no-lawd'" v-model="filters.umdNm" name="umdNm" :disabled="legalDongDisabled"><option value="">{{ legalDongLoading ? '동 목록 불러오는 중' : '전체 동' }}</option><option v-for="dong in legalDongs" :key="dong.value" :value="dong.value">{{ dong.label }}</option></select></label>
             <label><span>아파트명</span><input v-model.trim="filters.aptName" name="aptName" type="text" autocomplete="off" placeholder="래미안" /></label>
             <label><span>시작월</span><input v-model="filters.startDealMonth" name="startDealMonth" type="month" /></label>
             <label><span>종료월</span><input v-model="filters.endDealMonth" name="endDealMonth" type="month" /></label>
-            <label><span>정렬</span><select v-model="filters.sort" name="sort" :disabled="sortDisabled"><option v-for="option in sortOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
+            <label><span>정렬</span><select v-model="filters.sort" name="sort" :disabled="sortDisabled"><option v-for="option in activeSortOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
             <label><span>표시 방식</span><select v-model="resultDisplayMode" name="resultDisplayMode"><option value="5">5개씩 보기</option><option value="10">10개씩 보기</option><option value="20">20개씩 보기</option><option value="all">전체 보기</option></select></label>
           </div>
-          <div class="price-filter" :class="{ 'is-disabled': !priceRangeAvailable }">
-            <div class="price-filter-header">
-              <span>가격 구간</span>
-              <strong>{{ priceRangeSummary }}</strong>
-            </div>
-            <div class="price-input-grid">
-              <label><span>최소 실거래가</span><input :value="filters.minPrice" type="number" inputmode="numeric" min="0" step="100" :disabled="!priceRangeAvailable" @input="handleMinPriceInput" /></label>
-              <label><span>최대 실거래가</span><input :value="filters.maxPrice" type="number" inputmode="numeric" min="0" step="100" :disabled="!priceRangeAvailable" @input="handleMaxPriceInput" /></label>
-            </div>
-            <div class="range-control" :style="{ '--range-min': `${priceMinPercent}%`, '--range-max': `${priceMaxPercent}%` }">
-              <div class="range-track" aria-hidden="true"></div>
-              <input class="range-thumb" :class="{ 'is-stacked': lastStackedThumb === 'min' }" :value="filters.minPrice" type="range" :min="priceRangeMin ?? 0" :max="priceRangeMax ?? 0" :step="priceSliderStep" :disabled="!priceRangeAvailable" aria-label="최소 실거래가" @pointerdown="handlePriceThumbPointerDown('min')" @input="handlePriceThumbInput('min', $event)" />
-              <input class="range-thumb" :class="{ 'is-stacked': lastStackedThumb === 'max' }" :value="filters.maxPrice" type="range" :min="priceRangeMin ?? 0" :max="priceRangeMax ?? 0" :step="priceSliderStep" :disabled="!priceRangeAvailable" aria-label="최대 실거래가" @pointerdown="handlePriceThumbPointerDown('max')" @input="handlePriceThumbInput('max', $event)" />
-            </div>
+          <div v-if="priceFilterVisible" class="price-filter" :class="{ 'is-disabled': !priceRangeAvailable }">
+            <template v-if="filters.dealMode === 'monthly'">
+              <div class="price-filter-header">
+                <span>월세 구간</span>
+                <strong>{{ monthlyRentRangeSummary }}</strong>
+              </div>
+              <div class="price-input-grid">
+                <label><span>최소 월세</span><input v-model="filters.minMonthlyRent" type="number" inputmode="numeric" min="0" step="10" :disabled="!monthlyRentRangeAvailable" /></label>
+                <label><span>최대 월세</span><input v-model="filters.maxMonthlyRent" type="number" inputmode="numeric" min="0" step="10" :disabled="!monthlyRentRangeAvailable" /></label>
+              </div>
+              <div class="range-control" :style="{ '--range-min': `${monthlyRentMinPercent}%`, '--range-max': `${monthlyRentMaxPercent}%` }">
+                <div class="range-track" aria-hidden="true"></div>
+                <input class="range-thumb" :class="{ 'is-stacked': lastMonthlyRentStackedThumb === 'min' }" :value="filters.minMonthlyRent" type="range" :min="monthlyRentRangeMin ?? 0" :max="monthlyRentRangeMax ?? 0" step="10" :disabled="!monthlyRentRangeAvailable" aria-label="최소 월세" @pointerdown="handleMonthlyRentThumbPointerDown('min')" @input="handleMonthlyRentThumbInput('min', $event)" />
+                <input class="range-thumb" :class="{ 'is-stacked': lastMonthlyRentStackedThumb === 'max' }" :value="filters.maxMonthlyRent" type="range" :min="monthlyRentRangeMin ?? 0" :max="monthlyRentRangeMax ?? 0" step="10" :disabled="!monthlyRentRangeAvailable" aria-label="최대 월세" @pointerdown="handleMonthlyRentThumbPointerDown('max')" @input="handleMonthlyRentThumbInput('max', $event)" />
+              </div>
+              <div class="price-filter-header sub-filter-header">
+                <span>보증금 구간</span>
+                <strong>{{ priceRangeSummary }}</strong>
+              </div>
+              <div class="price-input-grid">
+                <label><span>최소 보증금</span><input :value="filters[activeMinPriceKey]" type="number" inputmode="numeric" min="0" step="100" :disabled="!priceRangeAvailable" @input="handleMinPriceInput" /></label>
+                <label><span>최대 보증금</span><input :value="filters[activeMaxPriceKey]" type="number" inputmode="numeric" min="0" step="100" :disabled="!priceRangeAvailable" @input="handleMaxPriceInput" /></label>
+              </div>
+              <div class="range-control" :style="{ '--range-min': `${priceMinPercent}%`, '--range-max': `${priceMaxPercent}%` }">
+                <div class="range-track" aria-hidden="true"></div>
+                <input class="range-thumb" :class="{ 'is-stacked': lastStackedThumb === 'min' }" :value="filters[activeMinPriceKey]" type="range" :min="priceRangeMin ?? 0" :max="priceRangeMax ?? 0" :step="priceSliderStep" :disabled="!priceRangeAvailable" aria-label="최소 보증금" @pointerdown="handlePriceThumbPointerDown('min')" @input="handlePriceThumbInput('min', $event)" />
+                <input class="range-thumb" :class="{ 'is-stacked': lastStackedThumb === 'max' }" :value="filters[activeMaxPriceKey]" type="range" :min="priceRangeMin ?? 0" :max="priceRangeMax ?? 0" :step="priceSliderStep" :disabled="!priceRangeAvailable" aria-label="최대 보증금" @pointerdown="handlePriceThumbPointerDown('max')" @input="handlePriceThumbInput('max', $event)" />
+              </div>
+            </template>
+            <template v-else>
+              <div class="price-filter-header">
+                <span>{{ priceFilterTitle }}</span>
+                <strong>{{ priceRangeSummary }}</strong>
+              </div>
+              <div class="price-input-grid">
+                <label><span>{{ filters.dealMode === 'sale' ? '최소 실거래가' : '최소 보증금' }}</span><input :value="filters[activeMinPriceKey]" type="number" inputmode="numeric" min="0" step="100" :disabled="!priceRangeAvailable" @input="handleMinPriceInput" /></label>
+                <label><span>{{ filters.dealMode === 'sale' ? '최대 실거래가' : '최대 보증금' }}</span><input :value="filters[activeMaxPriceKey]" type="number" inputmode="numeric" min="0" step="100" :disabled="!priceRangeAvailable" @input="handleMaxPriceInput" /></label>
+              </div>
+              <div class="range-control" :style="{ '--range-min': `${priceMinPercent}%`, '--range-max': `${priceMaxPercent}%` }">
+                <div class="range-track" aria-hidden="true"></div>
+                <input class="range-thumb" :class="{ 'is-stacked': lastStackedThumb === 'min' }" :value="filters[activeMinPriceKey]" type="range" :min="priceRangeMin ?? 0" :max="priceRangeMax ?? 0" :step="priceSliderStep" :disabled="!priceRangeAvailable" aria-label="최소 가격" @pointerdown="handlePriceThumbPointerDown('min')" @input="handlePriceThumbInput('min', $event)" />
+                <input class="range-thumb" :class="{ 'is-stacked': lastStackedThumb === 'max' }" :value="filters[activeMaxPriceKey]" type="range" :min="priceRangeMin ?? 0" :max="priceRangeMax ?? 0" :step="priceSliderStep" :disabled="!priceRangeAvailable" aria-label="최대 가격" @pointerdown="handlePriceThumbPointerDown('max')" @input="handlePriceThumbInput('max', $event)" />
+              </div>
+            </template>
             <div class="price-filter-actions">
-              <button class="secondary-button compact-button" type="button" :disabled="loading || priceRangeLoading || !hasPriceRangeCondition()" @click="searchFullPriceRange">{{ priceRangeLoading ? '조회 중' : '전체 조회' }}</button>
+              <button class="secondary-button compact-button" type="button" :disabled="priceRangeLoadDisabled" @click="searchFullPriceRange">{{ priceRangeLoading ? '조회 중' : '전체 조회' }}</button>
             </div>
           </div>
+          <p v-if="regionError" class="inline-error">{{ regionError }}</p>
           <p v-if="legalDongError" class="inline-error">{{ legalDongError }}</p>
           <p v-if="dealMonthError" class="inline-error">{{ dealMonthError }}</p>
 
@@ -1773,7 +2048,7 @@ export default {
             <li v-for="item in items" :key="itemKey(item)">
               <button type="button" class="result-card" :class="{ 'is-selected': selectedItem && itemKey(selectedItem) === itemKey(item) }" @click="selectItem(item)">
                 <span class="item-card-header">
-                  <span class="item-title">{{ displayAptName(item) }}</span>
+                  <span class="item-title"><span class="deal-type-badge">{{ displayDealType(item) }}</span>{{ displayAptName(item) }}</span>
                   <strong class="item-price">{{ displayDealAmount(item) }}</strong>
                 </span>
                 <span class="item-address">{{ displayRegion(item) }} {{ displayAddress(item) }}</span>
@@ -1804,6 +2079,13 @@ export default {
               <div><dt>전용면적</dt><dd>{{ displayArea(selectedItem) }}</dd></div>
               <div><dt>층</dt><dd>{{ displayFloor(selectedItem) }}</dd></div>
               <div><dt>건축연도</dt><dd>{{ displayBuildYear(selectedItem) }}</dd></div>
+              <template v-if="selectedItem?.dealType === 'jeonse' || selectedItem?.dealType === 'monthly'">
+                <div><dt>거래유형</dt><dd>{{ displayDealType(selectedItem) }}</dd></div>
+                <div><dt>계약기간</dt><dd>{{ fieldText(selectedItem?.contractTerm) }}</dd></div>
+                <div><dt>계약구분</dt><dd>{{ fieldText(selectedItem?.contractType) }}</dd></div>
+                <div><dt>갱신권</dt><dd>{{ fieldText(selectedItem?.useRRRight) }}</dd></div>
+                <div><dt>종전금액</dt><dd>보증금 {{ displayManwon(selectedItem?.preDepositManwon) }} / 월세 {{ displayManwon(selectedItem?.preMonthlyRentManwon) }}</dd></div>
+              </template>
             </dl>
           </div>
         </div>

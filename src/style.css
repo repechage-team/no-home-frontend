@@ -381,6 +381,31 @@ h2 {
   gap: 12px;
 }
 
+.deal-mode-tabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.deal-mode-button {
+  min-width: 0;
+  min-height: 36px;
+  border: 1px solid #c8d2dc;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #2f3a4b;
+  padding: 7px 8px;
+  font-size: 0.84rem;
+  font-weight: 900;
+}
+
+.deal-mode-button.is-active {
+  border-color: var(--primary-green);
+  background: var(--primary-green-soft);
+  color: #174f42;
+}
+
 .price-filter {
   display: grid;
   gap: 12px;
@@ -415,6 +440,12 @@ h2 {
   font-size: 0.82rem;
   overflow-wrap: anywhere;
   text-align: right;
+}
+
+.sub-filter-header {
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid #e2e8ee;
 }
 
 .price-input-grid {
@@ -965,6 +996,21 @@ select:focus {
   color: var(--text-strong);
   font-size: 0.82rem;
   overflow-wrap: anywhere;
+}
+
+.deal-type-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 6px;
+  border: 1px solid #b8d8cc;
+  border-radius: 999px;
+  background: var(--primary-green-soft);
+  color: #174f42;
+  padding: 2px 6px;
+  font-size: 0.72rem;
+  font-weight: 950;
+  line-height: 1.15;
+  vertical-align: middle;
 }
 
 @keyframes spin {
