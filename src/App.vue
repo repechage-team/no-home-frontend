@@ -32,6 +32,10 @@ const SELECTED_MARKER_IMAGE_URL = `data:image/svg+xml;charset=UTF-8,${encodeURIC
 </svg>
 `)}`
 const KAKAO_MAP_API_KEY = import.meta.env.VITE_KAKAO_MAP_API_KEY
+const NOTICE_ADMIN_EMAILS = (import.meta.env.VITE_NOTICE_ADMIN_EMAILS || 'admin@nohome.local,admin@example.com')
+  .split(',')
+  .map((email) => email.trim().toLowerCase())
+  .filter(Boolean)
 const KAKAO_MAP_SDK_ERROR_MESSAGE = 'Kakao Map SDK 로드에 실패했습니다. Kakao Developers의 Web 플랫폼 사이트 도메인에 현재 주소를 등록해 주세요.'
 let kakaoMapsSdkPromise = null
 
@@ -196,6 +200,7 @@ export default {
   },
   data() {
     return {
+      activePage: 'search',
       filters: emptyFilters(),
       items: [],
       totalCount: null,
@@ -246,7 +251,20 @@ export default {
       },
       memberSearchKeyword: '',
       memberSearchResults: [],
+      interestRegions: [],
+      interestRegionLoading: false,
+      interestRegionMessage: '',
+      interestRegionError: '',
       deleteConfirm: '',
+      notices: [],
+      noticeLoading: false,
+      noticeMessage: '',
+      noticeError: '',
+      noticeEditingId: null,
+      noticeForm: {
+        title: '',
+        content: '',
+      },
       kakao: null,
       map: null,
       defaultMarkerImage: null,
@@ -274,6 +292,9 @@ export default {
       }
 
       return `${fieldText(this.member.name, this.member.email)} · ${this.member.email}`
+    },
+    isNoticeAdmin() {
+      return Boolean(this.member?.email && NOTICE_ADMIN_EMAILS.includes(String(this.member.email).trim().toLowerCase()))
     },
     visibleCountLabel() {
       if (this.loading) {
@@ -359,6 +380,13 @@ export default {
     legalDongDisabled() {
       return !this.selectedLawdCd || this.legalDongLoading || this.legalDongs.length === 0
     },
+    canSaveInterestRegion() {
+      return Boolean(this.member && this.selectedLawdCd && this.filters.umdNm && !this.interestRegionLoading)
+    },
+    selectedInterestRegionLabel() {
+      const parts = [this.filters.sido, this.filters.sigungu, this.filters.umdNm].filter(Boolean)
+      return parts.length ? parts.join(' ') : '관심지역'
+    },
     sortDisabled() {
       return !this.filters.sido
     },
@@ -442,6 +470,17 @@ export default {
   methods: {
     isSeoul,
     fieldText,
+    openSearchPage() {
+      this.activePage = 'search'
+      this.noticeError = ''
+      this.noticeMessage = ''
+    },
+    openNoticePage() {
+      this.activePage = 'notice'
+      this.noticeError = ''
+      this.noticeMessage = ''
+      this.loadNotices({ silent: true })
+    },
     priceThumbPercent(value) {
       if (!this.priceRangeAvailable || this.priceRangeMax === this.priceRangeMin) {
         return 0
@@ -657,12 +696,248 @@ export default {
       const body = await response.json().catch(() => null)
 
       if (!response.ok || body?.success === false) {
-        const error = new Error(body?.message || `요청 실패 (${response.status})`)
+        const error = new Error(this.apiErrorMessage(response.status, body?.message))
         error.status = response.status
         throw error
       }
 
       return body?.data ?? body ?? {}
+    },
+    apiErrorMessage(status, message) {
+      if (message) {
+        return message
+      }
+      if (status === 401) {
+        return '로그인 후 이용할 수 있습니다.'
+      }
+      if (status === 403) {
+        return '권한이 없습니다.'
+      }
+      if (status === 404) {
+        return '요청한 정보를 찾을 수 없습니다.'
+      }
+      return `요청 처리에 실패했습니다. (${status})`
+    },
+    async requestNoticeApi(path, options = {}) {
+      return this.requestMemberApi(path, options)
+    },
+    async requestInterestRegionApi(path, options = {}) {
+      return this.requestMemberApi(path, options)
+    },
+    async loadInterestRegions({ silent = false } = {}) {
+      if (!this.member) {
+        this.interestRegions = []
+        this.interestRegionLoading = false
+        return
+      }
+
+      this.interestRegionLoading = true
+      if (!silent) {
+        this.interestRegionError = ''
+        this.interestRegionMessage = ''
+      }
+
+      try {
+        const regions = await this.requestInterestRegionApi('/api/interest-regions')
+        this.interestRegions = Array.isArray(regions) ? regions : []
+      } catch (exception) {
+        this.interestRegions = []
+        if (!silent) {
+          this.interestRegionError = exception instanceof Error
+            ? exception.message
+            : '관심지역을 불러오지 못했습니다.'
+        }
+      } finally {
+        this.interestRegionLoading = false
+      }
+    },
+    async saveInterestRegion() {
+      if (!this.member) {
+        this.interestRegionError = '로그인 후 관심지역을 저장할 수 있습니다.'
+        return
+      }
+      if (!this.selectedLawdCd || !this.filters.umdNm) {
+        this.interestRegionError = '시군구와 읍면동을 선택해 주세요.'
+        return
+      }
+
+      this.interestRegionLoading = true
+      this.interestRegionError = ''
+      this.interestRegionMessage = ''
+
+      try {
+        await this.requestInterestRegionApi('/api/interest-regions', {
+          method: 'POST',
+          body: JSON.stringify({
+            lawdCd: this.selectedLawdCd,
+            sido: this.filters.sido,
+            sigungu: this.filters.sigungu,
+            umdNm: this.filters.umdNm,
+          }),
+        })
+        this.interestRegionMessage = `${this.selectedInterestRegionLabel}을 저장했습니다.`
+        await this.loadInterestRegions({ silent: true })
+      } catch (exception) {
+        this.interestRegionError = exception instanceof Error
+          ? exception.message
+          : '관심지역 저장에 실패했습니다.'
+      } finally {
+        this.interestRegionLoading = false
+      }
+    },
+    applyInterestRegion(region) {
+      if (!region) {
+        return
+      }
+
+      this.filters.sido = region.sido || ''
+      this.filters.sigungu = region.sigungu || ''
+      this.filters.umdNm = region.umdNm || ''
+      this.searchRequestId += 1
+      this.loading = false
+      this.legalDongs = []
+      this.legalDongError = ''
+      this.loadLegalDongs(region.lawdCd || this.selectedLawdCd)
+      this.interestRegionMessage = `${this.displayInterestRegion(region)}을 검색 조건에 적용했습니다.`
+      this.interestRegionError = ''
+    },
+    async deleteInterestRegion(region) {
+      if (!region?.interestRegionId) {
+        return
+      }
+
+      this.interestRegionLoading = true
+      this.interestRegionError = ''
+      this.interestRegionMessage = ''
+
+      try {
+        await this.requestInterestRegionApi(`/api/interest-regions/${region.interestRegionId}`, {
+          method: 'DELETE',
+        })
+        this.interestRegionMessage = `${this.displayInterestRegion(region)}을 삭제했습니다.`
+        await this.loadInterestRegions({ silent: true })
+      } catch (exception) {
+        this.interestRegionError = exception instanceof Error
+          ? exception.message
+          : '관심지역 삭제에 실패했습니다.'
+      } finally {
+        this.interestRegionLoading = false
+      }
+    },
+    displayInterestRegion(region) {
+      return [region?.sido, region?.sigungu, region?.umdNm]
+        .filter(Boolean)
+        .map((value) => fieldText(value))
+        .join(' ')
+    },
+    async loadNotices({ silent = false } = {}) {
+      this.noticeLoading = true
+      if (!silent) {
+        this.noticeError = ''
+      }
+
+      try {
+        const notices = await this.requestNoticeApi('/api/notices?limit=10')
+        this.notices = Array.isArray(notices) ? notices : []
+      } catch (exception) {
+        this.notices = []
+        if (!silent) {
+          this.noticeError = exception instanceof Error
+            ? exception.message
+            : '공지사항을 불러오지 못했습니다.'
+        }
+      } finally {
+        this.noticeLoading = false
+      }
+    },
+    resetNoticeForm() {
+      this.noticeEditingId = null
+      this.noticeForm = {
+        title: '',
+        content: '',
+      }
+    },
+    editNotice(notice) {
+      this.noticeEditingId = notice.noticeId
+      this.noticeForm = {
+        title: notice.title || '',
+        content: notice.content || '',
+      }
+      this.noticeMessage = ''
+      this.noticeError = ''
+    },
+    async saveNotice() {
+      if (!this.isNoticeAdmin) {
+        this.noticeError = '관리자만 공지사항을 작성할 수 있습니다.'
+        return
+      }
+
+      this.noticeLoading = true
+      this.noticeError = ''
+      this.noticeMessage = ''
+
+      try {
+        const path = this.noticeEditingId
+          ? `/api/notices/${this.noticeEditingId}`
+          : '/api/notices'
+        await this.requestNoticeApi(path, {
+          method: this.noticeEditingId ? 'PUT' : 'POST',
+          body: JSON.stringify(this.noticeForm),
+        })
+        this.noticeMessage = this.noticeEditingId ? '공지사항이 수정되었습니다.' : '공지사항이 등록되었습니다.'
+        this.resetNoticeForm()
+        await this.loadNotices({ silent: false })
+      } catch (exception) {
+        this.noticeError = exception instanceof Error
+          ? exception.message
+          : '공지사항 저장에 실패했습니다.'
+      } finally {
+        this.noticeLoading = false
+      }
+    },
+    async deleteNotice(notice) {
+      if (!notice?.noticeId) {
+        return
+      }
+
+      this.noticeLoading = true
+      this.noticeError = ''
+      this.noticeMessage = ''
+
+      try {
+        await this.requestNoticeApi(`/api/notices/${notice.noticeId}`, {
+          method: 'DELETE',
+        })
+        if (this.noticeEditingId === notice.noticeId) {
+          this.resetNoticeForm()
+        }
+        this.noticeMessage = '공지사항이 삭제되었습니다.'
+        await this.loadNotices({ silent: false })
+      } catch (exception) {
+        this.noticeError = exception instanceof Error
+          ? exception.message
+          : '공지사항 삭제에 실패했습니다.'
+      } finally {
+        this.noticeLoading = false
+      }
+    },
+    displayNoticeDate(notice) {
+      const value = notice?.updatedAt || notice?.createdAt
+      if (!value) {
+        return '-'
+      }
+
+      const date = new Date(value)
+      if (Number.isNaN(date.getTime())) {
+        return fieldText(value)
+      }
+
+      return new Intl.DateTimeFormat('ko-KR', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(date)
     },
     async loadCurrentMember({ silent = true } = {}) {
       this.memberLoading = true
@@ -674,6 +949,7 @@ export default {
       try {
         const member = await this.requestMemberApi('/api/members/me')
         this.setCurrentMember(member)
+        await this.loadInterestRegions({ silent: true })
       } catch (exception) {
         if (exception?.status === 401) {
           this.setCurrentMember(null)
@@ -697,6 +973,11 @@ export default {
       this.profileForm = {
         name: member?.name || '',
         phone: member?.phone || '',
+      }
+      if (!member) {
+        this.interestRegions = []
+        this.interestRegionMessage = ''
+        this.interestRegionError = ''
       }
     },
     openAccountPanel(mode = this.member ? 'profile' : 'login') {
@@ -762,9 +1043,13 @@ export default {
           body: JSON.stringify(this.loginForm),
         })
         this.setCurrentMember(member)
+        await this.loadInterestRegions({ silent: true })
         this.loginForm.password = ''
         this.accountMode = 'profile'
         this.memberMessage = '로그인되었습니다.'
+        if (this.activePage === 'notice') {
+          await this.loadNotices({ silent: true })
+        }
       } catch (exception) {
         this.memberError = exception instanceof Error
           ? exception.message
@@ -811,10 +1096,18 @@ export default {
           method: 'POST',
         })
         this.setCurrentMember(null)
+        this.resetNoticeForm()
+        if (this.activePage === 'notice') {
+          await this.loadNotices({ silent: true })
+        }
         this.accountMode = 'login'
         this.memberMessage = '로그아웃되었습니다.'
       } catch (exception) {
         this.setCurrentMember(null)
+        this.resetNoticeForm()
+        if (this.activePage === 'notice') {
+          await this.loadNotices({ silent: true })
+        }
         this.accountMode = 'login'
         this.memberMessage = '로그인 상태를 정리했습니다.'
       } finally {
@@ -1522,7 +1815,7 @@ export default {
   <div class="app-shell">
     <header class="top-bar">
       <div class="brand">
-        <button class="brand-mark" type="button" aria-label="검색 초기화" @click="resetSearch">
+        <button class="brand-mark" type="button" aria-label="검색 화면" @click="openSearchPage">
           <img src="/nohome-logo.png" alt="" />
         </button>
         <div>
@@ -1530,6 +1823,10 @@ export default {
           <h1>NoHome 실거래가 검색</h1>
         </div>
       </div>
+      <nav class="top-nav" aria-label="주요 화면">
+        <button class="nav-tab" type="button" :class="{ 'is-active': activePage === 'search' }" @click="openSearchPage">검색</button>
+        <button class="nav-tab" type="button" :class="{ 'is-active': activePage === 'notice' }" @click="openNoticePage">공지사항</button>
+      </nav>
       <div class="account-actions" aria-label="회원 메뉴">
         <span class="account-summary">{{ accountSummary }}</span>
         <template v-if="member">
@@ -1627,7 +1924,7 @@ export default {
       </div>
     </section>
 
-    <main class="workspace" aria-label="주택 실거래가 검색 화면">
+    <main v-if="activePage === 'search'" class="workspace" aria-label="주택 실거래가 검색 화면">
       <section class="left-panel" aria-label="검색과 결과">
         <form class="search-panel" novalidate @submit.prevent="searchFirstPage">
           <div class="panel-heading">
@@ -1668,6 +1965,27 @@ export default {
           </div>
           <p v-if="legalDongError" class="inline-error">{{ legalDongError }}</p>
           <p v-if="dealMonthError" class="inline-error">{{ dealMonthError }}</p>
+
+          <section class="interest-region-panel" aria-label="관심지역">
+            <div class="interest-region-header">
+              <div>
+                <span>관심지역</span>
+                <strong>{{ member ? `${interestRegions.length.toLocaleString()}개 저장됨` : '로그인 필요' }}</strong>
+              </div>
+              <button class="secondary-button compact-button" type="button" :disabled="!canSaveInterestRegion" @click="saveInterestRegion">저장</button>
+            </div>
+            <p v-if="interestRegionMessage" class="interest-region-message">{{ interestRegionMessage }}</p>
+            <p v-if="interestRegionError" class="interest-region-message is-error">{{ interestRegionError }}</p>
+            <div v-if="!member" class="interest-region-empty">로그인 후 선택한 읍면동을 관심지역으로 저장할 수 있습니다.</div>
+            <div v-else-if="interestRegionLoading && interestRegions.length === 0" class="interest-region-empty">관심지역을 불러오는 중입니다.</div>
+            <div v-else-if="interestRegions.length === 0" class="interest-region-empty">저장된 관심지역이 없습니다.</div>
+            <ul v-else class="interest-region-list">
+              <li v-for="region in interestRegions" :key="region.interestRegionId">
+                <button type="button" @click="applyInterestRegion(region)">{{ displayInterestRegion(region) }}</button>
+                <button class="interest-region-delete" type="button" :disabled="interestRegionLoading" aria-label="관심지역 삭제" @click="deleteInterestRegion(region)">×</button>
+              </li>
+            </ul>
+          </section>
 
           <div class="actions">
             <button class="primary-button" :class="{ 'is-loading': loading }" type="button" :aria-busy="loading ? 'true' : 'false'" @click="searchFirstPage">
@@ -1737,7 +2055,54 @@ export default {
       </aside>
     </main>
 
+    <main v-else class="notice-page" aria-label="공지사항 화면">
+      <section class="notice-page-inner">
+        <div class="notice-page-heading">
+          <div>
+            <p class="section-kicker">Notice</p>
+            <h2>공지사항</h2>
+          </div>
+          <span class="result-count">{{ notices.length.toLocaleString() }}건</span>
+        </div>
+
+        <p v-if="noticeMessage" class="account-message">{{ noticeMessage }}</p>
+        <p v-if="noticeError" class="account-message is-error">{{ noticeError }}</p>
+
+        <form v-if="isNoticeAdmin" class="notice-form" @submit.prevent="saveNotice">
+          <label><span>제목</span><input v-model.trim="noticeForm.title" type="text" maxlength="200" required /></label>
+          <label><span>내용</span><textarea v-model.trim="noticeForm.content" rows="5" required></textarea></label>
+          <div class="actions">
+            <button class="primary-button" type="submit" :disabled="noticeLoading">{{ noticeEditingId ? '수정' : '등록' }}</button>
+            <button class="secondary-button" type="button" :disabled="noticeLoading" @click="resetNoticeForm">취소</button>
+          </div>
+        </form>
+
+        <div v-if="noticeLoading && notices.length === 0" class="state-box loading-state">
+          <strong>공지사항을 불러오는 중입니다.</strong>
+        </div>
+        <div v-else-if="notices.length === 0" class="state-box">
+          <strong>등록된 공지사항이 없습니다.</strong>
+        </div>
+        <ul v-else class="notice-list">
+          <li v-for="notice in notices" :key="notice.noticeId">
+            <article class="notice-item">
+              <div class="notice-item-header">
+                <strong>{{ notice.title }}</strong>
+                <span>{{ displayNoticeDate(notice) }}</span>
+              </div>
+              <p>{{ notice.content }}</p>
+              <div v-if="isNoticeAdmin && notice.editable" class="notice-actions">
+                <button class="secondary-button compact-button" type="button" :disabled="noticeLoading" @click="editNotice(notice)">수정</button>
+                <button class="danger-button compact-button" type="button" :disabled="noticeLoading" @click="deleteNotice(notice)">삭제</button>
+              </div>
+            </article>
+          </li>
+        </ul>
+      </section>
+    </main>
+
     <ChatWidget
+      v-if="activePage === 'search'"
       :logged-in="!!member"
       :current-filters="filters"
       :current-page="searchPage"
