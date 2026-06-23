@@ -68,3 +68,55 @@ test('applied filters feed the existing search request builder (round-trip)', ()
   assert.equal(request.dealYmd, '202405')
   assert.equal(request.autoImport, 'true')
 })
+
+test('applyAgentFilters applies the Phase 2 filter keys (sort/umdNm/min/maxPrice)', () => {
+  const filters = emptyFilters()
+  const { applied, ignored } = applyAgentFilters(filters, {
+    sigungu: '강남구',
+    umdNm: '역삼동',
+    sort: 'priceDesc',
+    minPrice: '50000',
+    maxPrice: '90000',
+  })
+
+  assert.equal(filters.umdNm, '역삼동')
+  assert.equal(filters.sort, 'priceDesc')
+  assert.equal(filters.minPrice, '50000')
+  assert.equal(filters.maxPrice, '90000')
+  assert.deepEqual(applied, {
+    sigungu: '강남구',
+    umdNm: '역삼동',
+    sort: 'priceDesc',
+    minPrice: '50000',
+    maxPrice: '90000',
+  })
+  assert.deepEqual(ignored, [])
+})
+
+test('Phase 2 filters round-trip into the search request builder', () => {
+  const filters = emptyFilters()
+  applyAgentFilters(filters, {
+    sido: '서울특별시',
+    sigungu: '강남구',
+    umdNm: '역삼동',
+    sort: 'priceDesc',
+    minPrice: '50000',
+    maxPrice: '90000',
+  })
+
+  const [request] = buildHouseSearchRequests(filters, { page: 1 })
+
+  assert.equal(request.umdNm, '역삼동')
+  assert.equal(request.sort, 'priceDesc') // 지역이 있으므로 정렬이 전송됨
+  assert.equal(request.minPrice, '50000')
+  assert.equal(request.maxPrice, '90000')
+})
+
+test('sort is dropped from the request when no region is set', () => {
+  const filters = emptyFilters()
+  applyAgentFilters(filters, { sort: 'priceDesc' })
+
+  const [request] = buildHouseSearchRequests(filters, { page: 1 })
+
+  assert.equal(request.sort, '') // 지역 미설정 → 정렬 미전송(백엔드 무시)
+})
