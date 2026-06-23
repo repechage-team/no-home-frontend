@@ -234,10 +234,18 @@ export default {
         name: '',
         phone: '',
       },
+      passwordResetForm: {
+        email: '',
+        name: '',
+        phone: '',
+        newPassword: '',
+      },
       profileForm: {
         name: '',
         phone: '',
       },
+      memberSearchKeyword: '',
+      memberSearchResults: [],
       deleteConfirm: '',
       kakao: null,
       map: null,
@@ -765,6 +773,34 @@ export default {
         this.memberLoading = false
       }
     },
+    async resetPassword() {
+      this.memberLoading = true
+      this.memberError = ''
+      this.memberMessage = ''
+
+      try {
+        await this.requestMemberApi('/api/auth/password-reset', {
+          method: 'POST',
+          body: JSON.stringify(this.passwordResetForm),
+        })
+        this.loginForm.email = this.passwordResetForm.email
+        this.loginForm.password = ''
+        this.passwordResetForm = {
+          email: '',
+          name: '',
+          phone: '',
+          newPassword: '',
+        }
+        this.accountMode = 'login'
+        this.memberMessage = '비밀번호가 변경되었습니다. 새 비밀번호로 로그인해 주세요.'
+      } catch (exception) {
+        this.memberError = exception instanceof Error
+          ? exception.message
+          : '비밀번호 변경에 실패했습니다.'
+      } finally {
+        this.memberLoading = false
+      }
+    },
     async logoutMember() {
       this.memberLoading = true
       this.memberError = ''
@@ -801,6 +837,30 @@ export default {
         this.memberError = exception instanceof Error
           ? exception.message
           : '내 정보 수정에 실패했습니다.'
+      } finally {
+        this.memberLoading = false
+      }
+    },
+    async searchMembers() {
+      const keyword = this.memberSearchKeyword.trim()
+      if (!keyword) {
+        this.memberError = '검색어를 입력해 주세요.'
+        return
+      }
+
+      this.memberLoading = true
+      this.memberError = ''
+      this.memberMessage = ''
+
+      try {
+        const params = new URLSearchParams({ keyword })
+        const members = await this.requestMemberApi(`/api/members/search?${params.toString()}`)
+        this.memberSearchResults = Array.isArray(members) ? members : []
+        this.memberMessage = `${this.memberSearchResults.length.toLocaleString()}명의 회원을 찾았습니다.`
+      } catch (exception) {
+        this.memberError = exception instanceof Error
+          ? exception.message
+          : '회원 검색에 실패했습니다.'
       } finally {
         this.memberLoading = false
       }
@@ -1495,6 +1555,7 @@ export default {
       <div v-if="!member" class="account-tabs" role="tablist" aria-label="인증 선택">
         <button class="secondary-button compact-button" type="button" :class="{ 'is-active': accountMode === 'login' }" @click="switchAccountMode('login')">로그인</button>
         <button class="secondary-button compact-button" type="button" :class="{ 'is-active': accountMode === 'signup' }" @click="switchAccountMode('signup')">회원가입</button>
+        <button class="secondary-button compact-button" type="button" :class="{ 'is-active': accountMode === 'password-reset' }" @click="switchAccountMode('password-reset')">비밀번호 찾기</button>
       </div>
 
       <p v-if="memberMessage" class="account-message">{{ memberMessage }}</p>
@@ -1506,6 +1567,17 @@ export default {
         <div class="actions">
           <button class="primary-button" type="submit" :disabled="memberLoading">로그인</button>
           <button class="secondary-button" type="button" @click="switchAccountMode('signup')">회원가입으로</button>
+        </div>
+      </form>
+
+      <form v-else-if="accountMode === 'password-reset' && !member" class="account-form" @submit.prevent="resetPassword">
+        <label><span>이메일</span><input v-model.trim="passwordResetForm.email" type="email" autocomplete="email" required /></label>
+        <label><span>이름</span><input v-model.trim="passwordResetForm.name" type="text" autocomplete="name" required /></label>
+        <label><span>전화번호</span><input v-model.trim="passwordResetForm.phone" type="tel" autocomplete="tel" /></label>
+        <label><span>새 비밀번호</span><input v-model="passwordResetForm.newPassword" type="password" autocomplete="new-password" required /></label>
+        <div class="actions">
+          <button class="primary-button" type="submit" :disabled="memberLoading">비밀번호 변경</button>
+          <button class="secondary-button" type="button" @click="switchAccountMode('login')">로그인으로</button>
         </div>
       </form>
 
@@ -1534,6 +1606,18 @@ export default {
             <button class="secondary-button" type="button" :disabled="memberLoading" @click="logoutMember">로그아웃</button>
           </div>
         </form>
+        <form class="account-form" @submit.prevent="searchMembers">
+          <label><span>회원 검색</span><input v-model.trim="memberSearchKeyword" type="search" placeholder="이메일, 이름, 전화번호" required /></label>
+          <div class="actions">
+            <button class="primary-button" type="submit" :disabled="memberLoading">검색</button>
+          </div>
+        </form>
+        <dl v-if="memberSearchResults.length" class="detail-list">
+          <div v-for="searchedMember in memberSearchResults" :key="searchedMember.memberId">
+            <dt>{{ searchedMember.name }}</dt>
+            <dd>{{ searchedMember.email }} · {{ searchedMember.phone || '-' }}</dd>
+          </div>
+        </dl>
         <div class="danger-zone">
           <strong>회원 탈퇴</strong>
           <p>삭제하면 현재 계정이 물리 삭제되고 세션이 종료됩니다.</p>
