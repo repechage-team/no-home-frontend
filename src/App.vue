@@ -1177,7 +1177,7 @@ export default {
       }
     },
     displayAptName(item) {
-      return fieldText(item?.aptNm, '?꾪뙆?몃챸 ?놁쓬')
+      return fieldText(item?.aptNm, '아파트명 없음')
     },
     displayAddress(item) {
       const dong = fieldText(item?.umdNm, '')
