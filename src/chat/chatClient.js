@@ -12,6 +12,28 @@ export const PROGRESS_STAGES = [
   { delayMs: 12000, text: '답변이 평소보다 오래 걸리고 있어요. 조금만 더 기다려주세요…' },
 ]
 
+// 단기 대화기억용 세션 conversationId. sessionStorage에 보관하므로 탭/세션을 닫으면
+// 사라지고(다음 세션은 새 id) 새 대화로 초기화된다 — 백엔드 InMemory 휘발 정책과 일치.
+// 질문/에이전트 모드가 같은 id를 공유해 한 세션 안에서 맥락이 이어진다.
+const CONVERSATION_ID_KEY = 'no-home.ai.conversation-id'
+
+export function getConversationId(storage = globalThis.sessionStorage) {
+  try {
+    const existing = storage?.getItem(CONVERSATION_ID_KEY)
+    if (existing) {
+      return existing
+    }
+    const created =
+      globalThis.crypto?.randomUUID?.() ??
+      `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+    storage?.setItem(CONVERSATION_ID_KEY, created)
+    return created
+  } catch {
+    // sessionStorage 접근 불가(프라이빗 모드 등) → id 없이 진행(서버가 memberId로 fallback).
+    return null
+  }
+}
+
 // Count by Unicode code points (not UTF-16 units), matching the backend's
 // code-point based limit. Avoids the HTML `maxlength` (UTF-16) mismatch where
 // emoji/surrogate pairs are counted as 2.

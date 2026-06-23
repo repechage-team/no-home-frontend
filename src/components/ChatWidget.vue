@@ -3,6 +3,7 @@ import {
   MAX_MESSAGE_LENGTH,
   PROGRESS_STAGES,
   clampToMaxLength,
+  getConversationId,
   messageLength,
   parseChatResponse,
 } from '../chat/chatClient.js'
@@ -168,7 +169,7 @@ export default {
             'Content-Type': 'application/json',
           },
           credentials: 'include',
-          body: JSON.stringify({ message }),
+          body: JSON.stringify({ message, conversationId: getConversationId() }),
         })
         const body = await response.json().catch(() => null)
         const result = parseChatResponse({
@@ -197,6 +198,7 @@ export default {
           credentials: 'include',
           body: JSON.stringify({
             message,
+            conversationId: getConversationId(),
             capabilities: capabilities(),
             currentFilters: this.currentFilters,
             currentPage: this.currentPage,

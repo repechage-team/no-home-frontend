@@ -5,8 +5,43 @@ import {
   PROGRESS_STAGES,
   messageLength,
   clampToMaxLength,
+  getConversationId,
   parseChatResponse,
 } from './chatClient.js'
+
+function fakeStorage() {
+  const map = new Map()
+  return {
+    getItem: (k) => (map.has(k) ? map.get(k) : null),
+    setItem: (k, v) => map.set(k, String(v)),
+  }
+}
+
+test('getConversationId returns a stable id within one storage (session)', () => {
+  const storage = fakeStorage()
+  const first = getConversationId(storage)
+  const second = getConversationId(storage)
+  assert.ok(first, 'an id is produced')
+  assert.equal(first, second, 'same session returns the same id')
+})
+
+test('getConversationId yields a fresh id for a new storage (closed/reopened session)', () => {
+  const a = getConversationId(fakeStorage())
+  const b = getConversationId(fakeStorage())
+  assert.notEqual(a, b, 'a brand new session gets a different id')
+})
+
+test('getConversationId tolerates unavailable storage (private mode)', () => {
+  const throwing = {
+    getItem: () => {
+      throw new Error('blocked')
+    },
+    setItem: () => {
+      throw new Error('blocked')
+    },
+  }
+  assert.equal(getConversationId(throwing), null)
+})
 
 test('messageLength counts Unicode code points, not UTF-16 units', () => {
   assert.equal(messageLength('hello'), 5)
