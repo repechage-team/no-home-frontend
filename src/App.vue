@@ -8,6 +8,7 @@ import {
   seoulLawdCodes,
   seoulDistricts,
 } from './houseSearchParams'
+import { resolvePaginateTarget, resolveItemTarget } from './chat/agentActions'
 import ChatWidget from './components/ChatWidget.vue'
 
 const SEARCH_ALL_FETCH_SIZE = 100
@@ -1004,6 +1005,44 @@ export default {
             this.reportAgent(this.buildAgentSummary(applied, ignored, command.action))
             return
           }
+          case 'paginate': {
+            const decision = resolvePaginateTarget(command, {
+              hasSearched: this.hasSearched,
+              displayMode: this.resultDisplayMode,
+              currentPage: this.searchPage,
+              totalPages: this.totalPages,
+            })
+            if (!decision.ok) {
+              this.reportAgent(decision.message)
+              return
+            }
+            await this.searchHouses(decision.targetPage)
+            this.reportAgent(`${decision.targetPage}페이지로 이동했어요.`)
+            return
+          }
+          case 'mapFocus':
+          case 'selectItem': {
+            const itemCount = Array.isArray(this.items) ? this.items.length : 0
+            const decision = resolveItemTarget(command.itemIndex, itemCount)
+            if (!decision.ok) {
+              this.reportAgent(decision.message)
+              return
+            }
+            const item = this.items[decision.index]
+            if (command.action === 'selectItem') {
+              this.selectItem(item)
+              this.reportAgent(`${command.itemIndex}번째 매물(${this.displayAptName(item)})을 선택했어요.`)
+              return
+            }
+            // mapFocus: 선택 없이 지도만 이동. 지도 미준비 시 graceful 안내.
+            if (!this.map || !this.kakao) {
+              this.reportAgent('지도가 준비되면 다시 시도해 주세요.')
+              return
+            }
+            this.focusMapItem(item)
+            this.reportAgent(`지도를 ${command.itemIndex}번째 매물로 옮겼어요.`)
+            return
+          }
           default:
             this.reportAgent('아직 지원하지 않는 동작이에요. 검색·조건설정·초기화만 도와드릴 수 있어요.')
         }
@@ -1047,6 +1086,15 @@ export default {
       if (month) {
         parts.push(month)
       }
+      const price = this.describeAgentPrice(applied)
+      if (price) {
+        parts.push(price)
+      }
+      // 정렬은 normalize 이후의 '실효값'을 본다(지역이 없으면 latest로 다운그레이드되므로 거짓 주장 방지).
+      const sortLabel = this.describeAgentSort(applied)
+      if (sortLabel) {
+        parts.push(sortLabel)
+      }
       const condition = parts.length ? parts.join('·') : '입력하신 조건'
       let summary = action === 'search'
         ? `${condition}로 검색했어요.`
@@ -1063,6 +1111,31 @@ export default {
         return start === end ? start : `${start}~${end}`
       }
       return start || end || ''
+    },
+    describeAgentPrice(applied) {
+      const hasMin = applied.minPrice !== undefined && applied.minPrice !== ''
+      const hasMax = applied.maxPrice !== undefined && applied.maxPrice !== ''
+      if (hasMin && hasMax) {
+        return `${this.displayManwon(applied.minPrice)} ~ ${this.displayManwon(applied.maxPrice)}`
+      }
+      if (hasMin) {
+        return `${this.displayManwon(applied.minPrice)} 이상`
+      }
+      if (hasMax) {
+        return `${this.displayManwon(applied.maxPrice)} 이하`
+      }
+      return ''
+    },
+    describeAgentSort(applied) {
+      // 에이전트가 정렬을 요청했고(applied.sort), 지역이 있어 실제 적용된 경우에만 표기한다.
+      if (!('sort' in applied) || !this.filters.sido) {
+        return ''
+      }
+      const effective = this.filters.sort
+      if (!effective || effective === 'latest') {
+        return ''
+      }
+      return SORT_OPTIONS.find((option) => option.value === effective)?.label || ''
     },
     reportAgent(text) {
       this.agentSeq += 1
