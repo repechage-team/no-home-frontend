@@ -1,4 +1,5 @@
-﻿export const emptyFilters = () => ({
+export const emptyFilters = () => ({
+  dealMode: 'sale',
   sido: '',
   sigungu: '',
   umdNm: '',
@@ -8,6 +9,10 @@
   sort: 'latest',
   minPrice: '',
   maxPrice: '',
+  minDeposit: '',
+  maxDeposit: '',
+  minMonthlyRent: '',
+  maxMonthlyRent: '',
 })
 
 export const seoulLawdCodes = {
@@ -40,27 +45,20 @@ export const seoulLawdCodes = {
 
 export const seoulDistricts = Object.keys(seoulLawdCodes)
 
-// ── 에이전트(실행) 모드 capability 단일 출처 ──────────────────────────────
-// 메인 검색이 지원하는 필터를 한 곳에서 선언한다. 에이전트 명령의 filters는 제네릭 맵이므로,
-// 프론트는 이 스키마에 있는 키만 적용하고 모르는 키는 무시·보고한다(메인 필터 변경에 견고).
-// 필터를 추가/변경할 때 이 객체만 갱신하면 에이전트가 자동으로 적응한다.
 export const filterSchema = {
   sido: { type: 'enum', values: ['서울특별시'] },
   sigungu: { type: 'enum', values: seoulDistricts },
   umdNm: { type: 'string' },
   aptName: { type: 'string' },
-  startDealMonth: { type: 'month' }, // YYYY-MM
-  endDealMonth: { type: 'month' }, // YYYY-MM
+  startDealMonth: { type: 'month' },
+  endDealMonth: { type: 'month' },
   sort: { type: 'enum', values: ['latest', 'oldest', 'priceDesc', 'priceAsc'] },
-  minPrice: { type: 'number' }, // 만원
-  maxPrice: { type: 'number' }, // 만원
+  minPrice: { type: 'number' },
+  maxPrice: { type: 'number' },
 }
 
-// 백엔드 프롬프트에 주입할 지원 필터 키 목록(allow-list 힌트).
 export const capabilities = () => Object.keys(filterSchema)
 
-// 에이전트가 돌려준 제네릭 filters 맵을 대상 filters 객체에 적용한다.
-// 인식하는 키만 적용하고, 모르는 키는 ignored로 보고한다(앱은 그대로 동작 유지).
 export const applyAgentFilters = (filters, incoming = {}) => {
   const applied = {}
   const ignored = []
@@ -100,7 +98,7 @@ export const normalizeDealYmdRange = (filters) => {
   }
 }
 
-const normalizeRegionName = (value) => value.trim().replace(/\s/g, '')
+const normalizeRegionName = (value = '') => value.trim().replace(/\s/g, '')
 
 export const isSeoul = (value) => {
   const sido = normalizeRegionName(value)
@@ -133,6 +131,10 @@ export const buildHousePriceRangeRequests = (filters) => {
   delete fields.sort
   delete fields.minPrice
   delete fields.maxPrice
+  delete fields.minDeposit
+  delete fields.maxDeposit
+  delete fields.minMonthlyRent
+  delete fields.maxMonthlyRent
   return [fields]
 }
 
@@ -142,15 +144,17 @@ const buildHouseSearchFields = (filters, options = {}) => {
   const page = Math.max(Number(options.page || 1), 1)
   const size = Math.max(Number(options.size || 10), 1)
   const selectedDistrictLawdCd = filters.sigungu && lawdCds.length === 1 ? lawdCds[0] : ''
+  const dealMode = normalizeDealMode(filters.dealMode)
+  const hasImportableMonth = Boolean(dealYmd) || Boolean(startDealYmd && endDealYmd)
   const shouldAutoImport = Boolean(selectedDistrictLawdCd)
     && Boolean(filters.sigungu)
-    && Boolean(dealYmd)
+    && hasImportableMonth
 
-  return {
-    sido: selectedDistrictLawdCd ? '' : filters.sido.trim(),
-    sigungu: selectedDistrictLawdCd ? '' : filters.sigungu.trim(),
-    umdNm: filters.umdNm.trim(),
-    aptName: filters.aptName.trim(),
+  const fields = {
+    sido: selectedDistrictLawdCd ? '' : (filters.sido || '').trim(),
+    sigungu: selectedDistrictLawdCd ? '' : (filters.sigungu || '').trim(),
+    umdNm: (filters.umdNm || '').trim(),
+    aptName: (filters.aptName || '').trim(),
     dealYmd,
     startDealYmd,
     endDealYmd,
@@ -158,10 +162,27 @@ const buildHouseSearchFields = (filters, options = {}) => {
     size: String(size),
     autoImport: shouldAutoImport ? 'true' : 'false',
     lawdCd: selectedDistrictLawdCd,
-    sort: filters.sido?.trim() ? (filters.sort || 'latest') : '',
-    minPrice: normalizePriceFilter(filters.minPrice),
-    maxPrice: normalizePriceFilter(filters.maxPrice),
+    sort: filters.sido?.trim() ? normalizeSortForDealMode(filters.sort, dealMode) : '',
   }
+
+  if (dealMode !== 'sale') {
+    fields.dealMode = dealMode
+  }
+
+  if (dealMode === 'sale') {
+    fields.minPrice = normalizePriceFilter(filters.minPrice)
+    fields.maxPrice = normalizePriceFilter(filters.maxPrice)
+  } else if (dealMode === 'jeonse') {
+    fields.minDeposit = normalizePriceFilter(filters.minDeposit)
+    fields.maxDeposit = normalizePriceFilter(filters.maxDeposit)
+  } else if (dealMode === 'monthly') {
+    fields.minDeposit = normalizePriceFilter(filters.minDeposit)
+    fields.maxDeposit = normalizePriceFilter(filters.maxDeposit)
+    fields.minMonthlyRent = normalizePriceFilter(filters.minMonthlyRent)
+    fields.maxMonthlyRent = normalizePriceFilter(filters.maxMonthlyRent)
+  }
+
+  return fields
 }
 
 const normalizePriceFilter = (value) => {
@@ -175,4 +196,27 @@ const normalizePriceFilter = (value) => {
   }
 
   return String(Math.trunc(numeric))
+}
+
+export const normalizeDealMode = (dealMode) => {
+  return ['sale', 'jeonse', 'monthly', 'rent', 'all'].includes(dealMode) ? dealMode : 'sale'
+}
+
+export const sortOptionsForDealMode = (dealMode) => {
+  const common = ['latest', 'oldest', 'areaDesc', 'areaAsc']
+  switch (normalizeDealMode(dealMode)) {
+    case 'sale':
+      return [...common, 'priceDesc', 'priceAsc']
+    case 'jeonse':
+      return [...common, 'depositDesc', 'depositAsc']
+    case 'monthly':
+      return [...common, 'depositDesc', 'depositAsc', 'monthlyRentDesc', 'monthlyRentAsc']
+    default:
+      return common
+  }
+}
+
+export const normalizeSortForDealMode = (sort, dealMode) => {
+  const allowed = sortOptionsForDealMode(dealMode)
+  return allowed.includes(sort) ? sort : 'latest'
 }

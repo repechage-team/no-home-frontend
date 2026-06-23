@@ -164,5 +164,82 @@ test('deal month range sends start and end deal ymd when months differ', () => {
   assert.equal(requests[0].dealYmd, '')
   assert.equal(requests[0].startDealYmd, '202604')
   assert.equal(requests[0].endDealYmd, '202606')
-  assert.equal(requests[0].autoImport, 'false')
+  assert.equal(requests[0].autoImport, 'true')
+})
+
+test('jeonse search sends deal mode and deposit filters only', () => {
+  const requests = buildHouseSearchRequests({
+    dealMode: 'jeonse',
+    sido: SEOUL,
+    sigungu: DONGJAK,
+    umdNm: '',
+    aptName: '',
+    startDealMonth: '2026-05',
+    endDealMonth: '2026-05',
+    sort: 'depositAsc',
+    minPrice: '100000',
+    maxPrice: '200000',
+    minDeposit: '30000',
+    maxDeposit: '80000',
+    minMonthlyRent: '10',
+    maxMonthlyRent: '100',
+  })
+
+  assert.equal(requests[0].dealMode, 'jeonse')
+  assert.equal(requests[0].sort, 'depositAsc')
+  assert.equal(requests[0].minDeposit, '30000')
+  assert.equal(requests[0].maxDeposit, '80000')
+  assert.equal(requests[0].minPrice, undefined)
+  assert.equal(requests[0].minMonthlyRent, undefined)
+})
+
+test('monthly search sends deposit and monthly rent filters', () => {
+  const requests = buildHouseSearchRequests({
+    dealMode: 'monthly',
+    sido: SEOUL,
+    sigungu: DONGJAK,
+    umdNm: '',
+    aptName: '',
+    startDealMonth: '2026-05',
+    endDealMonth: '2026-05',
+    sort: 'monthlyRentDesc',
+    minPrice: '',
+    maxPrice: '',
+    minDeposit: '1000',
+    maxDeposit: '10000',
+    minMonthlyRent: '50',
+    maxMonthlyRent: '150',
+  })
+
+  assert.equal(requests[0].dealMode, 'monthly')
+  assert.equal(requests[0].sort, 'monthlyRentDesc')
+  assert.equal(requests[0].minDeposit, '1000')
+  assert.equal(requests[0].maxDeposit, '10000')
+  assert.equal(requests[0].minMonthlyRent, '50')
+  assert.equal(requests[0].maxMonthlyRent, '150')
+})
+
+test('rent mode omits price filters and coerces unsupported price sort', () => {
+  const requests = buildHouseSearchRequests({
+    dealMode: 'rent',
+    sido: SEOUL,
+    sigungu: DONGJAK,
+    umdNm: '',
+    aptName: '',
+    startDealMonth: '2026-05',
+    endDealMonth: '2026-05',
+    sort: 'depositDesc',
+    minPrice: '100000',
+    maxPrice: '200000',
+    minDeposit: '30000',
+    maxDeposit: '80000',
+    minMonthlyRent: '10',
+    maxMonthlyRent: '100',
+  })
+
+  assert.equal(requests[0].dealMode, 'rent')
+  assert.equal(requests[0].sort, 'latest')
+  assert.equal(requests[0].minPrice, undefined)
+  assert.equal(requests[0].minDeposit, undefined)
+  assert.equal(requests[0].minMonthlyRent, undefined)
 })
