@@ -233,6 +233,7 @@ export default {
       selectedItem: null,
       loading: false,
       searchRequestId: 0,
+      searchPanelCollapsed: false,
       error: '',
       hasSearched: false,
       seoulDistricts,
@@ -533,10 +534,86 @@ export default {
         ? `${this.markerCountLabel} · ${this.mapStatus}`
         : this.mapStatus
     },
+    activeFilterSummary() {
+      const parts = []
+      const dealModeLabel = this.dealModeOptions.find((option) => option.value === this.filters.dealMode)?.label
+      if (dealModeLabel) {
+        parts.push(dealModeLabel)
+      }
+
+      const region = [
+        this.filters.sido,
+        this.filters.sigungu,
+        this.filters.umdNm,
+      ].filter(Boolean).join(' ')
+      parts.push(region || '지역 미선택')
+
+      if (this.filters.aptName) {
+        parts.push(`아파트 ${this.filters.aptName}`)
+      }
+
+      const dealMonth = this.describeFilterDealMonth()
+      if (dealMonth) {
+        parts.push(dealMonth)
+      }
+
+      const sortLabel = this.sortOptions.find((option) => option.value === this.filters.sort)?.label
+      if (sortLabel) {
+        parts.push(sortLabel)
+      }
+
+      parts.push(...this.describeFilterPriceParts())
+      return parts
+    },
   },
   methods: {
     isSeoul,
     fieldText,
+    toggleSearchPanel() {
+      this.searchPanelCollapsed = !this.searchPanelCollapsed
+    },
+    describeFilterDealMonth() {
+      const start = this.filters.startDealMonth
+      const end = this.filters.endDealMonth
+      if (start && end) {
+        return start === end ? start : `${start}~${end}`
+      }
+      return start || end || ''
+    },
+    describeFilterPriceParts() {
+      if (!this.priceFilterVisible) {
+        return []
+      }
+
+      const parts = []
+      const minPrice = this.filters[this.activeMinPriceKey]
+      const maxPrice = this.filters[this.activeMaxPriceKey]
+      if (minPrice !== '' || maxPrice !== '') {
+        const label = this.filters.dealMode === 'sale' ? '실거래가' : '보증금'
+        parts.push(`${label} ${this.describeFilterRange(minPrice, maxPrice)}`)
+      }
+
+      if (this.filters.dealMode === 'monthly'
+          && (this.filters.minMonthlyRent !== '' || this.filters.maxMonthlyRent !== '')) {
+        parts.push(`월세 ${this.describeFilterRange(this.filters.minMonthlyRent, this.filters.maxMonthlyRent)}`)
+      }
+
+      return parts
+    },
+    describeFilterRange(min, max) {
+      const hasMin = min !== '' && min !== null && min !== undefined
+      const hasMax = max !== '' && max !== null && max !== undefined
+      if (hasMin && hasMax) {
+        return `${this.displayManwon(min)}~${this.displayManwon(max)}`
+      }
+      if (hasMin) {
+        return `${this.displayManwon(min)} 이상`
+      }
+      if (hasMax) {
+        return `${this.displayManwon(max)} 이하`
+      }
+      return '전체'
+    },
     handleDealModeChange() {
       const allowed = sortOptionsForDealMode(this.filters.dealMode)
       if (!allowed.includes(this.filters.sort)) {
@@ -1166,6 +1243,7 @@ export default {
         if (shouldIgnorePriceRange) {
           this.priceRangeError = '유효하지 않은 가격 범위 입니다'
         }
+        this.searchPanelCollapsed = this.items.length > 0
         this.loading = false
         this.$nextTick(() => {
           this.refreshMapMarkers()
@@ -1504,6 +1582,7 @@ export default {
       this.lastStackedThumb = 'max'
       this.lastMonthlyRentStackedThumb = 'max'
       this.searchPage = 1
+      this.searchPanelCollapsed = false
       this.selectedItem = null
       this.loading = false
       this.error = ''
@@ -1954,101 +2033,127 @@ export default {
 
     <main class="workspace" aria-label="주택 실거래가 검색 화면">
       <section class="left-panel" aria-label="검색과 결과">
-        <form class="search-panel" novalidate @submit.prevent="searchFirstPage">
+        <form class="search-panel" :class="{ 'is-collapsed': searchPanelCollapsed }" novalidate @submit.prevent="searchFirstPage">
           <div class="panel-heading">
             <div>
               <p class="section-kicker">Search</p>
               <h2>주택 검색</h2>
             </div>
-            <span class="result-count">{{ visibleCountLabel }}</span>
-          </div>
-
-          <div class="deal-mode-tabs" role="radiogroup" aria-label="거래 유형">
-            <button
-              v-for="option in dealModeOptions"
-              :key="option.value"
-              type="button"
-              class="deal-mode-button"
-              :class="{ 'is-active': filters.dealMode === option.value }"
-              :aria-pressed="filters.dealMode === option.value ? 'true' : 'false'"
-              @click="filters.dealMode = option.value; handleDealModeChange()"
-            >
-              {{ option.label }}
-            </button>
-          </div>
-
-          <div class="field-grid">
-            <label><span>시도</span><select v-model="filters.sido" name="sido" @change="handleSidoChange"><option value="">전체/선택 안 함</option><option value="서울특별시">서울특별시</option></select></label>
-            <label><span>시군구</span><select v-model="filters.sigungu" name="sigungu" :disabled="!isSeoul(filters.sido)" @change="handleSigunguChange"><option value="" disabled>시군구 선택</option><option v-for="district in seoulDistricts" :key="district" :value="district">{{ district }}</option></select></label>
-            <label><span>읍면동</span><select :key="selectedLawdCd || 'no-lawd'" v-model="filters.umdNm" name="umdNm" :disabled="legalDongDisabled"><option value="">{{ legalDongLoading ? '동 목록 불러오는 중' : '전체 동' }}</option><option v-for="dong in legalDongs" :key="dong.value" :value="dong.value">{{ dong.label }}</option></select></label>
-            <label><span>아파트명</span><input v-model.trim="filters.aptName" name="aptName" type="text" autocomplete="off" placeholder="래미안" /></label>
-            <label><span>시작월</span><input v-model="filters.startDealMonth" name="startDealMonth" type="month" /></label>
-            <label><span>종료월</span><input v-model="filters.endDealMonth" name="endDealMonth" type="month" /></label>
-            <label><span>정렬</span><select v-model="filters.sort" name="sort" :disabled="sortDisabled"><option v-for="option in activeSortOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
-            <label><span>표시 방식</span><select v-model="resultDisplayMode" name="resultDisplayMode"><option value="5">5개씩 보기</option><option value="10">10개씩 보기</option><option value="20">20개씩 보기</option><option value="all">전체 보기</option></select></label>
-          </div>
-          <div v-if="priceFilterVisible" class="price-filter" :class="{ 'is-disabled': !priceRangeAvailable }">
-            <template v-if="filters.dealMode === 'monthly'">
-              <div class="price-filter-header">
-                <span>월세 구간</span>
-                <strong>{{ monthlyRentRangeSummary }}</strong>
-              </div>
-              <div class="price-input-grid">
-                <label><span>최소 월세</span><input v-model="filters.minMonthlyRent" type="number" inputmode="numeric" min="0" step="10" :disabled="!monthlyRentRangeAvailable" /></label>
-                <label><span>최대 월세</span><input v-model="filters.maxMonthlyRent" type="number" inputmode="numeric" min="0" step="10" :disabled="!monthlyRentRangeAvailable" /></label>
-              </div>
-              <div class="range-control" :style="{ '--range-min': `${monthlyRentMinPercent}%`, '--range-max': `${monthlyRentMaxPercent}%` }">
-                <div class="range-track" aria-hidden="true"></div>
-                <input class="range-thumb" :class="{ 'is-stacked': lastMonthlyRentStackedThumb === 'min' }" :value="filters.minMonthlyRent" type="range" :min="monthlyRentRangeMin ?? 0" :max="monthlyRentRangeMax ?? 0" step="10" :disabled="!monthlyRentRangeAvailable" aria-label="최소 월세" @pointerdown="handleMonthlyRentThumbPointerDown('min')" @input="handleMonthlyRentThumbInput('min', $event)" />
-                <input class="range-thumb" :class="{ 'is-stacked': lastMonthlyRentStackedThumb === 'max' }" :value="filters.maxMonthlyRent" type="range" :min="monthlyRentRangeMin ?? 0" :max="monthlyRentRangeMax ?? 0" step="10" :disabled="!monthlyRentRangeAvailable" aria-label="최대 월세" @pointerdown="handleMonthlyRentThumbPointerDown('max')" @input="handleMonthlyRentThumbInput('max', $event)" />
-              </div>
-              <div class="price-filter-header sub-filter-header">
-                <span>보증금 구간</span>
-                <strong>{{ priceRangeSummary }}</strong>
-              </div>
-              <div class="price-input-grid">
-                <label><span>최소 보증금</span><input :value="filters[activeMinPriceKey]" type="number" inputmode="numeric" min="0" step="100" :disabled="!priceRangeAvailable" @input="handleMinPriceInput" /></label>
-                <label><span>최대 보증금</span><input :value="filters[activeMaxPriceKey]" type="number" inputmode="numeric" min="0" step="100" :disabled="!priceRangeAvailable" @input="handleMaxPriceInput" /></label>
-              </div>
-              <div class="range-control" :style="{ '--range-min': `${priceMinPercent}%`, '--range-max': `${priceMaxPercent}%` }">
-                <div class="range-track" aria-hidden="true"></div>
-                <input class="range-thumb" :class="{ 'is-stacked': lastStackedThumb === 'min' }" :value="filters[activeMinPriceKey]" type="range" :min="priceRangeMin ?? 0" :max="priceRangeMax ?? 0" :step="priceSliderStep" :disabled="!priceRangeAvailable" aria-label="최소 보증금" @pointerdown="handlePriceThumbPointerDown('min')" @input="handlePriceThumbInput('min', $event)" />
-                <input class="range-thumb" :class="{ 'is-stacked': lastStackedThumb === 'max' }" :value="filters[activeMaxPriceKey]" type="range" :min="priceRangeMin ?? 0" :max="priceRangeMax ?? 0" :step="priceSliderStep" :disabled="!priceRangeAvailable" aria-label="최대 보증금" @pointerdown="handlePriceThumbPointerDown('max')" @input="handlePriceThumbInput('max', $event)" />
-              </div>
-            </template>
-            <template v-else>
-              <div class="price-filter-header">
-                <span>{{ priceFilterTitle }}</span>
-                <strong>{{ priceRangeSummary }}</strong>
-              </div>
-              <div class="price-input-grid">
-                <label><span>{{ filters.dealMode === 'sale' ? '최소 실거래가' : '최소 보증금' }}</span><input :value="filters[activeMinPriceKey]" type="number" inputmode="numeric" min="0" step="100" :disabled="!priceRangeAvailable" @input="handleMinPriceInput" /></label>
-                <label><span>{{ filters.dealMode === 'sale' ? '최대 실거래가' : '최대 보증금' }}</span><input :value="filters[activeMaxPriceKey]" type="number" inputmode="numeric" min="0" step="100" :disabled="!priceRangeAvailable" @input="handleMaxPriceInput" /></label>
-              </div>
-              <div class="range-control" :style="{ '--range-min': `${priceMinPercent}%`, '--range-max': `${priceMaxPercent}%` }">
-                <div class="range-track" aria-hidden="true"></div>
-                <input class="range-thumb" :class="{ 'is-stacked': lastStackedThumb === 'min' }" :value="filters[activeMinPriceKey]" type="range" :min="priceRangeMin ?? 0" :max="priceRangeMax ?? 0" :step="priceSliderStep" :disabled="!priceRangeAvailable" aria-label="최소 가격" @pointerdown="handlePriceThumbPointerDown('min')" @input="handlePriceThumbInput('min', $event)" />
-                <input class="range-thumb" :class="{ 'is-stacked': lastStackedThumb === 'max' }" :value="filters[activeMaxPriceKey]" type="range" :min="priceRangeMin ?? 0" :max="priceRangeMax ?? 0" :step="priceSliderStep" :disabled="!priceRangeAvailable" aria-label="최대 가격" @pointerdown="handlePriceThumbPointerDown('max')" @input="handlePriceThumbInput('max', $event)" />
-              </div>
-            </template>
-            <div class="price-filter-actions">
-              <button class="secondary-button compact-button" type="button" :disabled="priceRangeLoadDisabled" @click="searchFullPriceRange">{{ priceRangeLoading ? '조회 중' : '전체 조회' }}</button>
+            <div class="search-panel-controls">
+              <span class="result-count">{{ visibleCountLabel }}</span>
             </div>
           </div>
-          <p v-if="regionError" class="inline-error">{{ regionError }}</p>
-          <p v-if="legalDongError" class="inline-error">{{ legalDongError }}</p>
-          <p v-if="dealMonthError" class="inline-error">{{ dealMonthError }}</p>
 
-          <div class="actions">
-            <button class="primary-button" :class="{ 'is-loading': loading }" type="button" :aria-busy="loading ? 'true' : 'false'" @click="searchFirstPage">
-              <span v-if="loading" class="button-spinner" aria-hidden="true"></span>
-              <span>{{ loading ? '조회중' : '검색' }}</span>
-            </button>
-            <button class="secondary-button" type="button" @click="resetSearch">초기화</button>
+          <div class="filter-summary" aria-label="현재 검색 조건 요약">
+            <span v-for="part in activeFilterSummary" :key="part">{{ part }}</span>
           </div>
+
+            <div id="search-panel-body" class="search-panel-body">
+              <div class="deal-mode-tabs" role="radiogroup" aria-label="거래 유형">
+                <button
+                  v-for="option in dealModeOptions"
+                  :key="option.value"
+                  type="button"
+                  class="deal-mode-button"
+                  :class="{ 'is-active': filters.dealMode === option.value }"
+                  :aria-pressed="filters.dealMode === option.value ? 'true' : 'false'"
+                  @click="filters.dealMode = option.value; handleDealModeChange()"
+                >
+                  {{ option.label }}
+                </button>
+              </div>
+
+              <div class="field-grid">
+                <label><span>시도</span><select v-model="filters.sido" name="sido" @change="handleSidoChange"><option value="">전체/선택 안 함</option><option value="서울특별시">서울특별시</option></select></label>
+                <label><span>시군구</span><select v-model="filters.sigungu" name="sigungu" :disabled="!isSeoul(filters.sido)" @change="handleSigunguChange"><option value="" disabled>시군구 선택</option><option v-for="district in seoulDistricts" :key="district" :value="district">{{ district }}</option></select></label>
+                <label><span>읍면동</span><select :key="selectedLawdCd || 'no-lawd'" v-model="filters.umdNm" name="umdNm" :disabled="legalDongDisabled"><option value="">{{ legalDongLoading ? '동 목록 불러오는 중' : '전체 동' }}</option><option v-for="dong in legalDongs" :key="dong.value" :value="dong.value">{{ dong.label }}</option></select></label>
+                <label><span>아파트명</span><input v-model.trim="filters.aptName" name="aptName" type="text" autocomplete="off" placeholder="래미안" /></label>
+                <label><span>시작월</span><input v-model="filters.startDealMonth" name="startDealMonth" type="month" /></label>
+                <label><span>종료월</span><input v-model="filters.endDealMonth" name="endDealMonth" type="month" /></label>
+                <label><span>정렬</span><select v-model="filters.sort" name="sort" :disabled="sortDisabled"><option v-for="option in activeSortOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
+                <label><span>표시 방식</span><select v-model="resultDisplayMode" name="resultDisplayMode"><option value="5">5개씩 보기</option><option value="10">10개씩 보기</option><option value="20">20개씩 보기</option><option value="all">전체 보기</option></select></label>
+              </div>
+              <div v-if="priceFilterVisible" class="price-filter" :class="{ 'is-disabled': !priceRangeAvailable }">
+                <template v-if="filters.dealMode === 'monthly'">
+                  <div class="price-filter-header">
+                    <span>월세 구간</span>
+                    <strong>{{ monthlyRentRangeSummary }}</strong>
+                  </div>
+                  <div class="price-input-grid">
+                    <label><span>최소 월세</span><input v-model="filters.minMonthlyRent" type="number" inputmode="numeric" min="0" step="10" :disabled="!monthlyRentRangeAvailable" /></label>
+                    <label><span>최대 월세</span><input v-model="filters.maxMonthlyRent" type="number" inputmode="numeric" min="0" step="10" :disabled="!monthlyRentRangeAvailable" /></label>
+                  </div>
+                  <div class="range-control" :style="{ '--range-min': `${monthlyRentMinPercent}%`, '--range-max': `${monthlyRentMaxPercent}%` }">
+                    <div class="range-track" aria-hidden="true"></div>
+                    <input class="range-thumb" :class="{ 'is-stacked': lastMonthlyRentStackedThumb === 'min' }" :value="filters.minMonthlyRent" type="range" :min="monthlyRentRangeMin ?? 0" :max="monthlyRentRangeMax ?? 0" step="10" :disabled="!monthlyRentRangeAvailable" aria-label="최소 월세" @pointerdown="handleMonthlyRentThumbPointerDown('min')" @input="handleMonthlyRentThumbInput('min', $event)" />
+                    <input class="range-thumb" :class="{ 'is-stacked': lastMonthlyRentStackedThumb === 'max' }" :value="filters.maxMonthlyRent" type="range" :min="monthlyRentRangeMin ?? 0" :max="monthlyRentRangeMax ?? 0" step="10" :disabled="!monthlyRentRangeAvailable" aria-label="최대 월세" @pointerdown="handleMonthlyRentThumbPointerDown('max')" @input="handleMonthlyRentThumbInput('max', $event)" />
+                  </div>
+                  <div class="price-filter-header sub-filter-header">
+                    <span>보증금 구간</span>
+                    <strong>{{ priceRangeSummary }}</strong>
+                  </div>
+                  <div class="price-input-grid">
+                    <label><span>최소 보증금</span><input :value="filters[activeMinPriceKey]" type="number" inputmode="numeric" min="0" step="100" :disabled="!priceRangeAvailable" @input="handleMinPriceInput" /></label>
+                    <label><span>최대 보증금</span><input :value="filters[activeMaxPriceKey]" type="number" inputmode="numeric" min="0" step="100" :disabled="!priceRangeAvailable" @input="handleMaxPriceInput" /></label>
+                  </div>
+                  <div class="range-control" :style="{ '--range-min': `${priceMinPercent}%`, '--range-max': `${priceMaxPercent}%` }">
+                    <div class="range-track" aria-hidden="true"></div>
+                    <input class="range-thumb" :class="{ 'is-stacked': lastStackedThumb === 'min' }" :value="filters[activeMinPriceKey]" type="range" :min="priceRangeMin ?? 0" :max="priceRangeMax ?? 0" :step="priceSliderStep" :disabled="!priceRangeAvailable" aria-label="최소 보증금" @pointerdown="handlePriceThumbPointerDown('min')" @input="handlePriceThumbInput('min', $event)" />
+                    <input class="range-thumb" :class="{ 'is-stacked': lastStackedThumb === 'max' }" :value="filters[activeMaxPriceKey]" type="range" :min="priceRangeMin ?? 0" :max="priceRangeMax ?? 0" :step="priceSliderStep" :disabled="!priceRangeAvailable" aria-label="최대 보증금" @pointerdown="handlePriceThumbPointerDown('max')" @input="handlePriceThumbInput('max', $event)" />
+                  </div>
+                </template>
+                <template v-else>
+                  <div class="price-filter-header">
+                    <span>{{ priceFilterTitle }}</span>
+                    <strong>{{ priceRangeSummary }}</strong>
+                  </div>
+                  <div class="price-input-grid">
+                    <label><span>{{ filters.dealMode === 'sale' ? '최소 실거래가' : '최소 보증금' }}</span><input :value="filters[activeMinPriceKey]" type="number" inputmode="numeric" min="0" step="100" :disabled="!priceRangeAvailable" @input="handleMinPriceInput" /></label>
+                    <label><span>{{ filters.dealMode === 'sale' ? '최대 실거래가' : '최대 보증금' }}</span><input :value="filters[activeMaxPriceKey]" type="number" inputmode="numeric" min="0" step="100" :disabled="!priceRangeAvailable" @input="handleMaxPriceInput" /></label>
+                  </div>
+                  <div class="range-control" :style="{ '--range-min': `${priceMinPercent}%`, '--range-max': `${priceMaxPercent}%` }">
+                    <div class="range-track" aria-hidden="true"></div>
+                    <input class="range-thumb" :class="{ 'is-stacked': lastStackedThumb === 'min' }" :value="filters[activeMinPriceKey]" type="range" :min="priceRangeMin ?? 0" :max="priceRangeMax ?? 0" :step="priceSliderStep" :disabled="!priceRangeAvailable" aria-label="최소 가격" @pointerdown="handlePriceThumbPointerDown('min')" @input="handlePriceThumbInput('min', $event)" />
+                    <input class="range-thumb" :class="{ 'is-stacked': lastStackedThumb === 'max' }" :value="filters[activeMaxPriceKey]" type="range" :min="priceRangeMin ?? 0" :max="priceRangeMax ?? 0" :step="priceSliderStep" :disabled="!priceRangeAvailable" aria-label="최대 가격" @pointerdown="handlePriceThumbPointerDown('max')" @input="handlePriceThumbInput('max', $event)" />
+                  </div>
+                </template>
+                <div class="price-filter-actions">
+                  <button class="secondary-button compact-button" type="button" :disabled="priceRangeLoadDisabled" @click="searchFullPriceRange">{{ priceRangeLoading ? '조회 중' : '전체 조회' }}</button>
+                  <button class="primary-button compact-button price-filter-search-action" type="button" :disabled="loading || invalidPriceRange || invalidMonthlyRentRange" @click="searchFirstPage">검색</button>
+                </div>
+              </div>
+              <p v-if="regionError" class="inline-error">{{ regionError }}</p>
+              <p v-if="legalDongError" class="inline-error">{{ legalDongError }}</p>
+              <p v-if="dealMonthError" class="inline-error">{{ dealMonthError }}</p>
+
+              <div class="actions">
+                <button class="primary-button" :class="{ 'is-loading': loading }" type="button" :aria-busy="loading ? 'true' : 'false'" @click="searchFirstPage">
+                  <span v-if="loading" class="button-spinner" aria-hidden="true"></span>
+                  <span>{{ loading ? '조회중' : '검색' }}</span>
+                </button>
+                <button class="secondary-button" type="button" @click="resetSearch">초기화</button>
+              </div>
+            </div>
         </form>
 
         <div class="list-panel" aria-live="polite">
+          <button
+            v-if="hasSearched"
+            class="list-filter-toggle"
+            :class="{ 'is-collapsed': searchPanelCollapsed }"
+            type="button"
+            :aria-expanded="searchPanelCollapsed ? 'false' : 'true'"
+            aria-controls="search-panel-body"
+            :aria-label="searchPanelCollapsed ? '검색 조건 펼치기' : '검색 조건 접기'"
+            :title="searchPanelCollapsed ? '검색 조건 펼치기' : '검색 조건 접기'"
+            @click="toggleSearchPanel"
+          >
+            <span class="filter-handle-icon" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+            </span>
+          </button>
           <div v-if="hasSearched" class="pagination-bar">
             <div><strong>{{ pageSummary }}</strong><span>{{ resultMetaLabel }}</span></div>
             <div class="pagination-actions">
