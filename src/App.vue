@@ -36,7 +36,7 @@ const NOTICE_ADMIN_EMAILS = (import.meta.env.VITE_NOTICE_ADMIN_EMAILS || 'admin@
   .split(',')
   .map((email) => email.trim().toLowerCase())
   .filter(Boolean)
-const KAKAO_MAP_SDK_ERROR_MESSAGE = 'Kakao Map SDK 로드에 실패했습니다. Kakao Developers의 Web 플랫폼 사이트 도메인에 현재 주소를 등록해 주세요.'
+const KAKAO_MAP_SDK_ERROR_MESSAGE = 'Kakao Map SDK 로드에 실패했습니다. JavaScript 키인지 확인하고 Kakao Developers Web 플랫폼 사이트 도메인에 현재 주소를 등록해 주세요.'
 let kakaoMapsSdkPromise = null
 
 const fieldText = (value, fallback = '-') => {
@@ -135,7 +135,7 @@ const loadKakaoMapsSdk = () => {
     const existingScript = document.querySelector('script[data-kakao-map-sdk="true"]')
     const finishLoad = () => {
       if (!window.kakao?.maps) {
-        reject(new Error('Kakao Map SDK를 불러오지 못했습니다.'))
+        reject(new Error(KAKAO_MAP_SDK_ERROR_MESSAGE))
         return
       }
 
@@ -249,6 +249,7 @@ export default {
         name: '',
         phone: '',
       },
+      profileEditing: false,
       memberSearchKeyword: '',
       memberSearchResults: [],
       interestRegions: [],
@@ -480,6 +481,15 @@ export default {
       this.noticeError = ''
       this.noticeMessage = ''
       this.loadNotices({ silent: true })
+    },
+    openMemberSearchPage() {
+      if (!this.isNoticeAdmin) {
+        this.memberError = '관리자만 회원 검색을 사용할 수 있습니다.'
+        return
+      }
+      this.activePage = 'member-search'
+      this.memberError = ''
+      this.memberMessage = ''
     },
     priceThumbPercent(value) {
       if (!this.priceRangeAvailable || this.priceRangeMax === this.priceRangeMin) {
@@ -974,15 +984,25 @@ export default {
         name: member?.name || '',
         phone: member?.phone || '',
       }
+      if (!member || !this.isNoticeAdmin) {
+        this.clearMemberSearch()
+      }
       if (!member) {
         this.interestRegions = []
         this.interestRegionMessage = ''
         this.interestRegionError = ''
+        if (this.activePage === 'member-search') {
+          this.activePage = 'search'
+        }
+      } else if (this.activePage === 'member-search' && !this.isNoticeAdmin) {
+        this.activePage = 'search'
       }
     },
     openAccountPanel(mode = this.member ? 'profile' : 'login') {
       this.accountMode = mode
-      this.accountPanelOpen = true
+      this.activePage = 'account'
+      this.accountPanelOpen = false
+      this.profileEditing = false
       this.memberMessage = ''
       this.memberError = ''
       if (mode === 'profile') {
@@ -990,16 +1010,20 @@ export default {
       }
     },
     closeAccountPanel() {
-      this.accountPanelOpen = false
+      this.activePage = 'search'
       this.memberMessage = ''
       this.memberError = ''
       this.deleteConfirm = ''
+      this.profileEditing = false
+      this.clearMemberSearch()
     },
     switchAccountMode(mode) {
       this.accountMode = mode
       this.memberMessage = ''
       this.memberError = ''
       this.deleteConfirm = ''
+      this.profileEditing = false
+      this.clearMemberSearch()
       if (mode === 'profile') {
         this.loadCurrentMember({ silent: false })
       }
@@ -1097,6 +1121,8 @@ export default {
         })
         this.setCurrentMember(null)
         this.resetNoticeForm()
+        this.clearMemberSearch()
+        this.profileEditing = false
         if (this.activePage === 'notice') {
           await this.loadNotices({ silent: true })
         }
@@ -1105,6 +1131,8 @@ export default {
       } catch (exception) {
         this.setCurrentMember(null)
         this.resetNoticeForm()
+        this.clearMemberSearch()
+        this.profileEditing = false
         if (this.activePage === 'notice') {
           await this.loadNotices({ silent: true })
         }
@@ -1125,6 +1153,7 @@ export default {
           body: JSON.stringify(this.profileForm),
         })
         this.setCurrentMember(member)
+        this.profileEditing = false
         this.memberMessage = '내 정보가 수정되었습니다.'
       } catch (exception) {
         this.memberError = exception instanceof Error
@@ -1134,7 +1163,29 @@ export default {
         this.memberLoading = false
       }
     },
+    startProfileEdit() {
+      this.profileForm = {
+        name: this.member?.name || '',
+        phone: this.member?.phone || '',
+      }
+      this.memberMessage = ''
+      this.memberError = ''
+      this.profileEditing = true
+    },
+    cancelProfileEdit() {
+      this.profileForm = {
+        name: this.member?.name || '',
+        phone: this.member?.phone || '',
+      }
+      this.profileEditing = false
+      this.memberError = ''
+    },
     async searchMembers() {
+      if (!this.isNoticeAdmin) {
+        this.memberError = '관리자만 회원 검색을 사용할 수 있습니다.'
+        return
+      }
+
       const keyword = this.memberSearchKeyword.trim()
       if (!keyword) {
         this.memberError = '검색어를 입력해 주세요.'
@@ -1157,6 +1208,10 @@ export default {
       } finally {
         this.memberLoading = false
       }
+    },
+    clearMemberSearch() {
+      this.memberSearchKeyword = ''
+      this.memberSearchResults = []
     },
     async deleteMember() {
       if (this.deleteConfirm !== '삭제') {
@@ -1824,8 +1879,8 @@ export default {
         </div>
       </div>
       <nav class="top-nav" aria-label="주요 화면">
-        <button class="nav-tab" type="button" :class="{ 'is-active': activePage === 'search' }" @click="openSearchPage">검색</button>
-        <button class="nav-tab" type="button" :class="{ 'is-active': activePage === 'notice' }" @click="openNoticePage">공지사항</button>
+        <button class="nav-tab icon-tab" type="button" :class="{ 'is-active': activePage === 'notice' }" aria-label="공지사항" title="공지사항" @click="openNoticePage">📢</button>
+        <button v-if="isNoticeAdmin" class="nav-tab" type="button" :class="{ 'is-active': activePage === 'member-search' }" @click="openMemberSearchPage">회원 검색</button>
       </nav>
       <div class="account-actions" aria-label="회원 메뉴">
         <span class="account-summary">{{ accountSummary }}</span>
@@ -1835,94 +1890,9 @@ export default {
         </template>
         <template v-else>
           <button class="account-button" type="button" @click="openAccountPanel('login')">로그인</button>
-          <button class="secondary-button compact-button" type="button" @click="openAccountPanel('signup')">회원가입</button>
         </template>
       </div>
     </header>
-
-    <section v-if="accountPanelOpen" class="account-panel" aria-label="회원 관리">
-      <div class="account-panel-header">
-        <div>
-          <p class="section-kicker">Account</p>
-          <h2>회원 관리</h2>
-        </div>
-        <button class="back-button compact-button" type="button" @click="closeAccountPanel">닫기</button>
-      </div>
-
-      <div v-if="!member" class="account-tabs" role="tablist" aria-label="인증 선택">
-        <button class="secondary-button compact-button" type="button" :class="{ 'is-active': accountMode === 'login' }" @click="switchAccountMode('login')">로그인</button>
-        <button class="secondary-button compact-button" type="button" :class="{ 'is-active': accountMode === 'signup' }" @click="switchAccountMode('signup')">회원가입</button>
-        <button class="secondary-button compact-button" type="button" :class="{ 'is-active': accountMode === 'password-reset' }" @click="switchAccountMode('password-reset')">비밀번호 찾기</button>
-      </div>
-
-      <p v-if="memberMessage" class="account-message">{{ memberMessage }}</p>
-      <p v-if="memberError" class="account-message is-error">{{ memberError }}</p>
-
-      <form v-if="accountMode === 'login' && !member" class="account-form" @submit.prevent="loginMember">
-        <label><span>이메일</span><input v-model.trim="loginForm.email" type="email" autocomplete="email" required /></label>
-        <label><span>비밀번호</span><input v-model="loginForm.password" type="password" autocomplete="current-password" required /></label>
-        <div class="actions">
-          <button class="primary-button" type="submit" :disabled="memberLoading">로그인</button>
-          <button class="secondary-button" type="button" @click="switchAccountMode('signup')">회원가입으로</button>
-        </div>
-      </form>
-
-      <form v-else-if="accountMode === 'password-reset' && !member" class="account-form" @submit.prevent="resetPassword">
-        <label><span>이메일</span><input v-model.trim="passwordResetForm.email" type="email" autocomplete="email" required /></label>
-        <label><span>이름</span><input v-model.trim="passwordResetForm.name" type="text" autocomplete="name" required /></label>
-        <label><span>전화번호</span><input v-model.trim="passwordResetForm.phone" type="tel" autocomplete="tel" /></label>
-        <label><span>새 비밀번호</span><input v-model="passwordResetForm.newPassword" type="password" autocomplete="new-password" required /></label>
-        <div class="actions">
-          <button class="primary-button" type="submit" :disabled="memberLoading">비밀번호 변경</button>
-          <button class="secondary-button" type="button" @click="switchAccountMode('login')">로그인으로</button>
-        </div>
-      </form>
-
-      <form v-else-if="accountMode === 'signup' && !member" class="account-form" @submit.prevent="signupMember">
-        <label><span>이메일</span><input v-model.trim="signupForm.email" type="email" autocomplete="email" required /></label>
-        <label><span>비밀번호</span><input v-model="signupForm.password" type="password" autocomplete="new-password" required /></label>
-        <label><span>이름</span><input v-model.trim="signupForm.name" type="text" autocomplete="name" required /></label>
-        <label><span>전화번호</span><input v-model.trim="signupForm.phone" type="tel" autocomplete="tel" /></label>
-        <div class="actions">
-          <button class="primary-button" type="submit" :disabled="memberLoading">회원가입</button>
-          <button class="secondary-button" type="button" @click="switchAccountMode('login')">로그인으로</button>
-        </div>
-      </form>
-
-      <div v-else-if="member" class="profile-layout">
-        <dl class="detail-list">
-          <div><dt>이메일</dt><dd>{{ member.email }}</dd></div>
-          <div><dt>이름</dt><dd>{{ member.name }}</dd></div>
-          <div><dt>전화번호</dt><dd>{{ member.phone || '-' }}</dd></div>
-        </dl>
-        <form class="account-form" @submit.prevent="updateMember">
-          <label><span>이름</span><input v-model.trim="profileForm.name" type="text" required /></label>
-          <label><span>전화번호</span><input v-model.trim="profileForm.phone" type="tel" /></label>
-          <div class="actions">
-            <button class="primary-button" type="submit" :disabled="memberLoading">수정</button>
-            <button class="secondary-button" type="button" :disabled="memberLoading" @click="logoutMember">로그아웃</button>
-          </div>
-        </form>
-        <form class="account-form" @submit.prevent="searchMembers">
-          <label><span>회원 검색</span><input v-model.trim="memberSearchKeyword" type="search" placeholder="이메일, 이름, 전화번호" required /></label>
-          <div class="actions">
-            <button class="primary-button" type="submit" :disabled="memberLoading">검색</button>
-          </div>
-        </form>
-        <dl v-if="memberSearchResults.length" class="detail-list">
-          <div v-for="searchedMember in memberSearchResults" :key="searchedMember.memberId">
-            <dt>{{ searchedMember.name }}</dt>
-            <dd>{{ searchedMember.email }} · {{ searchedMember.phone || '-' }}</dd>
-          </div>
-        </dl>
-        <div class="danger-zone">
-          <strong>회원 탈퇴</strong>
-          <p>삭제하면 현재 계정이 물리 삭제되고 세션이 종료됩니다.</p>
-          <label><span>확인 문구</span><input v-model="deleteConfirm" type="text" placeholder="삭제" /></label>
-          <button class="danger-button" type="button" :disabled="memberLoading" @click="deleteMember">회원 삭제</button>
-        </div>
-      </div>
-    </section>
 
     <main v-if="activePage === 'search'" class="workspace" aria-label="주택 실거래가 검색 화면">
       <section class="left-panel" aria-label="검색과 결과">
@@ -2039,6 +2009,10 @@ export default {
         <div class="map-surface">
           <div ref="mapCanvas" v-once class="map-canvas" aria-label="Kakao 지도"></div>
           <div v-if="!mapReady" class="map-grid" aria-hidden="true"></div>
+          <div v-if="!mapReady || mapError" class="map-overlay-state" :class="{ 'is-error': mapError }">
+            <strong>{{ mapError ? '지도를 불러오지 못했습니다.' : '지도 준비 중입니다.' }}</strong>
+            <span>{{ mapStatusLabel }}</span>
+          </div>
           <div v-if="selectedItem" class="map-detail-panel">
             <button class="map-detail-close" type="button" aria-label="상세 닫기" @click="backToList">×</button>
             <strong>{{ displayAptName(selectedItem) }}</strong>
@@ -2053,6 +2027,114 @@ export default {
           </div>
         </div>
       </aside>
+    </main>
+
+    <main v-else-if="activePage === 'account'" class="notice-page account-page" aria-label="회원 관리 화면">
+      <section class="notice-page-inner account-page-inner">
+        <div class="notice-page-heading">
+          <div>
+            <p class="section-kicker">Account</p>
+            <h2>회원 관리</h2>
+          </div>
+          <button class="back-button compact-button" type="button" @click="closeAccountPanel">검색으로</button>
+        </div>
+
+        <div v-if="!member" class="account-tabs" role="tablist" aria-label="인증 선택">
+          <button class="secondary-button compact-button" type="button" :class="{ 'is-active': accountMode === 'login' }" @click="switchAccountMode('login')">로그인</button>
+          <button class="secondary-button compact-button" type="button" :class="{ 'is-active': accountMode === 'signup' }" @click="switchAccountMode('signup')">회원가입</button>
+          <button class="secondary-button compact-button" type="button" :class="{ 'is-active': accountMode === 'password-reset' }" @click="switchAccountMode('password-reset')">비밀번호 찾기</button>
+        </div>
+
+        <p v-if="memberMessage" class="account-message">{{ memberMessage }}</p>
+        <p v-if="memberError" class="account-message is-error">{{ memberError }}</p>
+
+        <form v-if="accountMode === 'login' && !member" class="account-form" @submit.prevent="loginMember">
+          <label><span>이메일</span><input v-model.trim="loginForm.email" type="email" autocomplete="email" required /></label>
+          <label><span>비밀번호</span><input v-model="loginForm.password" type="password" autocomplete="current-password" required /></label>
+          <div class="actions">
+            <button class="primary-button" type="submit" :disabled="memberLoading">로그인</button>
+            <button class="secondary-button" type="button" @click="switchAccountMode('signup')">회원가입으로</button>
+          </div>
+        </form>
+
+        <form v-else-if="accountMode === 'password-reset' && !member" class="account-form" @submit.prevent="resetPassword">
+          <label><span>이메일</span><input v-model.trim="passwordResetForm.email" type="email" autocomplete="email" required /></label>
+          <label><span>이름</span><input v-model.trim="passwordResetForm.name" type="text" autocomplete="name" required /></label>
+          <label><span>전화번호</span><input v-model.trim="passwordResetForm.phone" type="tel" autocomplete="tel" /></label>
+          <label><span>새 비밀번호</span><input v-model="passwordResetForm.newPassword" type="password" autocomplete="new-password" required /></label>
+          <div class="actions">
+            <button class="primary-button" type="submit" :disabled="memberLoading">비밀번호 변경</button>
+            <button class="secondary-button" type="button" @click="switchAccountMode('login')">로그인으로</button>
+          </div>
+        </form>
+
+        <form v-else-if="accountMode === 'signup' && !member" class="account-form" @submit.prevent="signupMember">
+          <label><span>이메일</span><input v-model.trim="signupForm.email" type="email" autocomplete="email" required /></label>
+          <label><span>비밀번호</span><input v-model="signupForm.password" type="password" autocomplete="new-password" required /></label>
+          <label><span>이름</span><input v-model.trim="signupForm.name" type="text" autocomplete="name" required /></label>
+          <label><span>전화번호</span><input v-model.trim="signupForm.phone" type="tel" autocomplete="tel" /></label>
+          <div class="actions">
+            <button class="primary-button" type="submit" :disabled="memberLoading">회원가입</button>
+            <button class="secondary-button" type="button" @click="switchAccountMode('login')">로그인으로</button>
+          </div>
+        </form>
+
+        <div v-else-if="member" class="profile-layout">
+          <dl class="detail-list">
+            <div><dt>이메일</dt><dd>{{ member.email }}</dd></div>
+            <div><dt>이름</dt><dd>{{ member.name }}</dd></div>
+            <div><dt>전화번호</dt><dd>{{ member.phone || '-' }}</dd></div>
+          </dl>
+          <div v-if="!profileEditing" class="actions">
+            <button class="primary-button" type="button" :disabled="memberLoading" @click="startProfileEdit">수정</button>
+            <button class="secondary-button" type="button" :disabled="memberLoading" @click="logoutMember">로그아웃</button>
+          </div>
+          <form v-else class="account-form" @submit.prevent="updateMember">
+            <label><span>이름</span><input v-model.trim="profileForm.name" type="text" required /></label>
+            <label><span>전화번호</span><input v-model.trim="profileForm.phone" type="tel" /></label>
+            <div class="actions">
+              <button class="primary-button" type="submit" :disabled="memberLoading">저장</button>
+              <button class="secondary-button" type="button" :disabled="memberLoading" @click="cancelProfileEdit">취소</button>
+            </div>
+          </form>
+          <div class="danger-zone">
+            <strong>회원 탈퇴</strong>
+            <p>삭제하면 현재 계정이 완전히 삭제되고 세션이 종료됩니다.</p>
+            <label><span>확인 문구</span><input v-model="deleteConfirm" type="text" placeholder="삭제" /></label>
+            <button class="danger-button" type="button" :disabled="memberLoading" @click="deleteMember">회원 삭제</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <main v-else-if="activePage === 'member-search' && isNoticeAdmin" class="notice-page account-page" aria-label="회원 검색 화면">
+      <section class="notice-page-inner account-page-inner">
+        <div class="notice-page-heading">
+          <div>
+            <p class="section-kicker">Admin</p>
+            <h2>회원 검색</h2>
+          </div>
+          <button class="back-button compact-button" type="button" @click="openSearchPage">검색으로</button>
+        </div>
+
+        <p v-if="memberMessage" class="account-message">{{ memberMessage }}</p>
+        <p v-if="memberError" class="account-message is-error">{{ memberError }}</p>
+
+        <form class="account-form" @submit.prevent="searchMembers">
+          <label><span>검색어</span><input v-model.trim="memberSearchKeyword" type="search" placeholder="이메일, 이름, 전화번호" required /></label>
+          <div class="actions">
+            <button class="primary-button" type="submit" :disabled="memberLoading">검색</button>
+            <button class="secondary-button" type="button" :disabled="memberLoading" @click="clearMemberSearch">초기화</button>
+          </div>
+        </form>
+
+        <dl v-if="memberSearchResults.length" class="detail-list member-search-results">
+          <div v-for="searchedMember in memberSearchResults" :key="searchedMember.memberId">
+            <dt>{{ searchedMember.name }}</dt>
+            <dd>{{ searchedMember.email }} · {{ searchedMember.phone || '-' }}</dd>
+          </div>
+        </dl>
+      </section>
     </main>
 
     <main v-else class="notice-page" aria-label="공지사항 화면">

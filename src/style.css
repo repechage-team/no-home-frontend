@@ -86,6 +86,15 @@ button:disabled {
   font-weight: 900;
 }
 
+.icon-tab {
+  display: grid;
+  width: 42px;
+  min-width: 42px;
+  place-items: center;
+  padding: 8px;
+  font-size: 1.05rem;
+}
+
 .nav-tab:hover,
 .nav-tab:focus-visible {
   border-color: #c8d2dc;
@@ -252,20 +261,6 @@ h2 {
   white-space: nowrap;
 }
 
-.account-panel {
-  border-bottom: 1px solid #d9e1e8;
-  background: #ffffff;
-  padding: 18px 28px 22px;
-}
-
-.account-panel-header {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 14px;
-}
-
 .account-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -293,11 +288,9 @@ h2 {
 .account-profile {
   display: grid;
   gap: 14px;
-  max-width: 760px;
 }
 
 .account-message {
-  max-width: 760px;
   margin: 0 0 12px;
   border: 1px solid #b8d8cc;
   border-radius: 8px;
@@ -343,10 +336,9 @@ h2 {
 
 .danger-zone {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(180px, 260px) auto;
-  align-items: end;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
   gap: 12px;
-  max-width: 900px;
   border: 1px solid #e6b8b0;
   border-radius: 8px;
   background: #fff7f5;
@@ -361,6 +353,15 @@ h2 {
   margin: 5px 0 0;
   color: #6d4a45;
   font-size: 0.88rem;
+}
+
+.profile-layout {
+  display: grid;
+  gap: 16px;
+}
+
+.account-page-inner {
+  max-width: 760px;
 }
 
 .workspace {
@@ -997,6 +998,10 @@ textarea:focus {
   overflow-wrap: anywhere;
 }
 
+.member-search-results {
+  margin-top: 16px;
+}
+
 .map-panel {
   display: flex;
   min-width: 0;
@@ -1125,6 +1130,43 @@ textarea:focus {
   background-size: 46px 46px;
 }
 
+.map-overlay-state {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 3;
+  display: grid;
+  gap: 6px;
+  width: min(420px, calc(100% - 40px));
+  transform: translate(-50%, -50%);
+  border: 1px solid #d9e1e8;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  padding: 14px;
+  text-align: center;
+  box-shadow: 0 12px 32px rgba(29, 36, 51, 0.12);
+}
+
+.map-overlay-state strong {
+  color: var(--text-strong);
+}
+
+.map-overlay-state span {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.map-overlay-state.is-error {
+  border-color: #e6b8b0;
+  background: rgba(255, 247, 245, 0.96);
+}
+
+.map-overlay-state.is-error strong,
+.map-overlay-state.is-error span {
+  color: #9c2f24;
+}
+
 .map-detail-panel {
   position: absolute;
   left: 16px;
@@ -1222,10 +1264,6 @@ textarea:focus {
   }
 
   .top-bar {
-    min-width: 840px;
-  }
-
-  .account-panel {
     min-width: 840px;
   }
 
