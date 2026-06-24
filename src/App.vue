@@ -323,6 +323,18 @@ export default {
     this.loadCurrentMember()
     this.prepareMap()
   },
+  watch: {
+    // 탭 전환(공지/회원/로그인)으로 검색 main이 v-if로 파괴되면 mapCanvas div도 사라진다.
+    // 검색 화면 복귀 시 새 div에 지도를 재생성하고 마커를 복원한다(빈 지도 방지).
+    activePage(value) {
+      if (value === 'search' && this.mapReady) {
+        this.$nextTick(() => {
+          this.ensureMap(true)
+          this.refreshMapMarkers()
+        })
+      }
+    },
+  },
   computed: {
     accountSummary() {
       if (!this.member) {
