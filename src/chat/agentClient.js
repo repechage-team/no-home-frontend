@@ -11,10 +11,11 @@ function retryHint(retryAfter) {
     : ''
 }
 
-// Map an /api/ai/agent response into either a command or an error.
-// Returns { kind: 'command', command } on success, otherwise { kind: 'error', text }.
-// 상태 매핑은 parseChatResponse와 동일(401/429/!ok/503/504). 성공 시 data가 AgentCommand.
-export function parseAgentResponse({ status, ok, body, retryAfter } = {}) {
+// Map a unified /api/ai/assistant response into a chat message.
+// The backend returns AssistantResponse { type:'answer'|'command', answer, command, notice }.
+// Returns { kind:'answer', text } | { kind:'command', command, notice } | { kind:'error', text }
+// so ChatWidget can branch the same way for both a text answer and a page-action command.
+export function parseAssistantResponse({ status, ok, body, retryAfter } = {}) {
   if (status === 401) {
     return { kind: 'error', text: '로그인이 필요합니다.' }
   }
@@ -25,9 +26,17 @@ export function parseAgentResponse({ status, ok, body, retryAfter } = {}) {
   if (!ok || body?.success === false) {
     return { kind: 'error', text: body?.message || `요청 실패 (${status})` }
   }
-  const command = body?.data
-  if (!command || typeof command !== 'object') {
-    return { kind: 'error', text: '명령을 해석하지 못했습니다.' }
+  const data = body?.data
+  if (!data || typeof data !== 'object') {
+    return { kind: 'error', text: '응답을 해석하지 못했습니다.' }
   }
-  return { kind: 'command', command }
+  if (data.type === 'command') {
+    const command = data.command
+    if (!command || typeof command !== 'object') {
+      return { kind: 'error', text: '명령을 해석하지 못했습니다.' }
+    }
+    return { kind: 'command', command, notice: data.notice ?? null }
+  }
+  // 기본은 텍스트 답변. answer가 비면 안내 문구로 대체.
+  return { kind: 'answer', text: data.answer || '응답을 받지 못했습니다.' }
 }

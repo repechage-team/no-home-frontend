@@ -5,9 +5,15 @@ import {
   applyAgentFilters,
   buildHouseSearchRequests,
   capabilities,
+  currentDealMonth,
   emptyFilters,
   filterSchema,
 } from './houseSearchParams.js'
+
+test('currentDealMonth returns the previous month as YYYY-MM', () => {
+  assert.equal(currentDealMonth(new Date(2026, 5, 24)), '2026-05') // 6월 -> 직전 5월
+  assert.equal(currentDealMonth(new Date(2026, 0, 15)), '2025-12') // 1월 -> 전년 12월
+})
 
 test('capabilities() returns exactly the declared filter keys', () => {
   assert.deepEqual(capabilities(), [
@@ -17,12 +23,25 @@ test('capabilities() returns exactly the declared filter keys', () => {
     'aptName',
     'startDealMonth',
     'endDealMonth',
+    'dealMode',
     'sort',
     'minPrice',
     'maxPrice',
+    'minDeposit',
+    'maxDeposit',
+    'minMonthlyRent',
+    'maxMonthlyRent',
   ])
   // capabilities는 filterSchema 키와 항상 동일(단일 출처).
   assert.deepEqual(capabilities(), Object.keys(filterSchema))
+})
+
+test('every search-form filter key is exposed as an AI capability (no drift)', () => {
+  // 검색 폼이 실제 쓰는 필터(emptyFilters)는 모두 filterSchema에 있어야 AI가 인식한다.
+  // 전월세(dealMode/deposit/monthlyRent)처럼 폼에만 추가되고 schema 갱신이 누락되면 여기서 잡힌다.
+  const schemaKeys = new Set(Object.keys(filterSchema))
+  const missing = Object.keys(emptyFilters()).filter((key) => !schemaKeys.has(key))
+  assert.deepEqual(missing, [], `filterSchema에 누락된 폼 필터 키: ${missing.join(', ')}`)
 })
 
 test('applyAgentFilters applies recognized keys and reports them', () => {

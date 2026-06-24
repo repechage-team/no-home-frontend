@@ -48,28 +48,3 @@ export function clampToMaxLength(text, max = MAX_MESSAGE_LENGTH) {
   return chars.length <= max ? value : chars.slice(0, max).join('')
 }
 
-function retryHint(retryAfter) {
-  const seconds = Number.parseInt(retryAfter ?? '', 10)
-  return Number.isFinite(seconds) && seconds > 0
-    ? ` ${seconds}초 후 다시 시도할 수 있어요.`
-    : ''
-}
-
-// Map an /api/ai/chat response into a chat message.
-// Returns { kind: 'answer' | 'error', text } so the caller never has to branch
-// on raw status codes. 401/429 get tailored copy; 409/503/504 and any other
-// failure fall back to the server's ApiResponse message.
-export function parseChatResponse({ status, ok, body, retryAfter } = {}) {
-  if (status === 401) {
-    return { kind: 'error', text: '로그인이 필요합니다.' }
-  }
-  if (status === 429) {
-    const base = body?.message || '질문 요청이 너무 많습니다.'
-    return { kind: 'error', text: `${base}${retryHint(retryAfter)}` }
-  }
-  if (!ok || body?.success === false) {
-    return { kind: 'error', text: body?.message || `요청 실패 (${status})` }
-  }
-  const answer = body?.data ?? '응답을 받지 못했습니다.'
-  return { kind: 'answer', text: String(answer) }
-}
