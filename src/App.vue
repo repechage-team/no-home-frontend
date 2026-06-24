@@ -1361,6 +1361,10 @@ export default {
             this.normalizeAgentFilters(applied)
             if (command.action === 'search') {
               await this.searchHouses(1)
+            } else {
+              // setFilters는 검색을 실행하지 않아 패널 자동 접힘(searchHouses) 로직을 타지 않는다.
+              // 직전 검색으로 접혀 있으면 바뀐 조건이 가려지므로, 조건을 보여주도록 패널을 펼친다.
+              this.searchPanelCollapsed = false
             }
             this.reportAgent(this.buildAgentSummary(applied, ignored, command.action))
             return
