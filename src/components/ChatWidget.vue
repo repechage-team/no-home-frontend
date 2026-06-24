@@ -273,6 +273,7 @@ export default {
     <section v-else class="chat-panel" aria-label="AI 챗봇" :aria-busy="loading" :style="panelStyle">
       <div
         class="chat-resize-handle"
+        :class="{ 'is-resizing': resizeState }"
         role="separator"
         aria-label="창 크기 조절"
         title="드래그하여 창 크기 조절"
@@ -380,16 +381,23 @@ export default {
   z-index: 2;
   touch-action: none;
 }
+/* 패널 좌상단 라운드(14px)와 동심 평행한 1/4 호. 평소 숨김, hover/드래그 중에만 표시. */
 .chat-resize-handle::before {
   content: '';
   position: absolute;
-  top: 5px;
-  left: 5px;
-  width: 7px;
-  height: 7px;
-  border-top: 2px solid rgba(255, 255, 255, 0.85);
-  border-left: 2px solid rgba(255, 255, 255, 0.85);
-  border-top-left-radius: 3px;
+  top: 4px;
+  left: 4px;
+  width: 10px;
+  height: 10px;
+  border-top: 2px solid rgba(255, 255, 255, 0.9);
+  border-left: 2px solid rgba(255, 255, 255, 0.9);
+  border-top-left-radius: 10px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.chat-resize-handle:hover::before,
+.chat-resize-handle.is-resizing::before {
+  opacity: 1;
 }
 
 .chat-header {
