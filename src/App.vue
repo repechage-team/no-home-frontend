@@ -258,6 +258,9 @@ export default {
       legalDongRequestId: 0,
       legalDongError: '',
       member: null,
+      // 메인 뷰 분기(search/account/member-search/notice). 기본은 검색 화면.
+      // (92cf333 머지 충돌 해결에서 누락됐던 초기화 복원 — issue #18)
+      activePage: 'search',
       accountPanelOpen: false,
       accountMode: 'login',
       memberLoading: false,
@@ -1259,6 +1262,26 @@ export default {
       } else if (this.activePage === 'member-search' && !this.isNoticeAdmin) {
         this.activePage = 'search'
       }
+    },
+    openSearchPage() {
+      this.activePage = 'search'
+      this.noticeError = ''
+      this.noticeMessage = ''
+    },
+    openNoticePage() {
+      this.activePage = 'notice'
+      this.noticeError = ''
+      this.noticeMessage = ''
+      this.loadNotices({ silent: true })
+    },
+    openMemberSearchPage() {
+      if (!this.isNoticeAdmin) {
+        this.memberError = '관리자만 회원 검색을 사용할 수 있습니다.'
+        return
+      }
+      this.activePage = 'member-search'
+      this.memberError = ''
+      this.memberMessage = ''
     },
     openAccountPanel(mode = this.member ? 'profile' : 'login') {
       this.accountMode = mode
