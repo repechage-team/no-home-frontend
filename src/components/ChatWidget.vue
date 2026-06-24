@@ -7,8 +7,12 @@ import {
   messageLength,
   parseChatResponse,
 } from '../chat/chatClient.js'
-import { parseAgentResponse } from '../chat/agentClient.js'
+import { parseAgentResponse, parseAssistantResponse } from '../chat/agentClient.js'
 import { capabilities } from '../houseSearchParams.js'
+
+// 피처 플래그: 켜지면 단일 /api/ai/assistant(tool calling)로 통합 호출하고 모드 토글을 숨긴다.
+// 꺼지면 기존 질문/실행 분리 경로를 유지한다(Phase 3에서 레거시 제거).
+const ASSISTANT_ENABLED = import.meta.env.VITE_AI_ASSISTANT_ENABLED === 'true'
 
 export default {
   name: 'ChatWidget',
@@ -67,6 +71,9 @@ export default {
         }
       }
       return ''
+    },
+    assistantEnabled() {
+      return ASSISTANT_ENABLED
     },
   },
   watch: {
@@ -154,7 +161,9 @@ export default {
       this.startProgress()
       this.scrollToBottom()
 
-      if (this.mode === 'agent') {
+      if (this.assistantEnabled) {
+        await this.sendAssistant(message)
+      } else if (this.mode === 'agent') {
         await this.sendAgent(message)
       } else {
         await this.sendQuestion(message)
@@ -231,6 +240,51 @@ export default {
         this.scrollToBottom()
       }
     },
+    // 통합 경로: 한 번의 /assistant 호출에서 LLM이 답변(answer)/명령(command)으로 분기한다.
+    async sendAssistant(message) {
+      try {
+        const response = await fetch('/api/ai/assistant', {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({
+            message,
+            conversationId: getConversationId(),
+            capabilities: capabilities(),
+            currentFilters: this.currentFilters,
+            currentPage: this.currentPage,
+            totalPages: this.totalPages,
+          }),
+        })
+        const body = await response.json().catch(() => null)
+        const result = parseAssistantResponse({
+          status: response.status,
+          ok: response.ok,
+          body,
+          retryAfter: response.headers.get('Retry-After'),
+        })
+        if (result.kind === 'command') {
+          // 명령은 App.vue가 적용하고 권위 있는 요약을 agentResult로 돌려준다(질문/실행 공통 흐름).
+          this.clearProgressTimers()
+          this.loadingStatus = '요청을 처리하고 있어요…'
+          this.$emit('agent-command', result.command)
+        } else {
+          // answer/error는 텍스트 버블로 종료.
+          this.clearProgressTimers()
+          this.loading = false
+          this.messages.push({ role: 'assistant', text: result.text })
+          this.scrollToBottom()
+        }
+      } catch (error) {
+        this.clearProgressTimers()
+        this.loading = false
+        this.messages.push({ role: 'assistant', text: error.message || '오류가 발생했습니다.' })
+        this.scrollToBottom()
+      }
+    },
   },
 }
 </script>
@@ -253,7 +307,7 @@ export default {
         <button class="chat-close" type="button" aria-label="닫기" @click="toggle">✕</button>
       </header>
 
-      <div class="chat-mode" role="group" aria-label="모드 선택">
+      <div v-if="!assistantEnabled" class="chat-mode" role="group" aria-label="모드 선택">
         <button
           type="button"
           class="chat-mode-btn"

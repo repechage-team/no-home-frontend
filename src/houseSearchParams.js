@@ -52,9 +52,21 @@ export const filterSchema = {
   aptName: { type: 'string' },
   startDealMonth: { type: 'month' },
   endDealMonth: { type: 'month' },
-  sort: { type: 'enum', values: ['latest', 'oldest', 'priceDesc', 'priceAsc'] },
+  // 거래 유형(매매/전세/월세). buildHouseSearchFields가 dealMode별로 가격/보증금/월세 필터를 분기한다.
+  dealMode: { type: 'enum', values: ['sale', 'jeonse', 'monthly', 'rent', 'all'] },
+  sort: {
+    type: 'enum',
+    values: [
+      'latest', 'oldest', 'priceDesc', 'priceAsc',
+      'depositDesc', 'depositAsc', 'monthlyRentDesc', 'monthlyRentAsc',
+    ],
+  },
   minPrice: { type: 'number' },
   maxPrice: { type: 'number' },
+  minDeposit: { type: 'number' },
+  maxDeposit: { type: 'number' },
+  minMonthlyRent: { type: 'number' },
+  maxMonthlyRent: { type: 'number' },
 }
 
 export const capabilities = () => Object.keys(filterSchema)
