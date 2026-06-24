@@ -5,9 +5,15 @@ import {
   applyAgentFilters,
   buildHouseSearchRequests,
   capabilities,
+  currentDealMonth,
   emptyFilters,
   filterSchema,
 } from './houseSearchParams.js'
+
+test('currentDealMonth returns the previous month as YYYY-MM', () => {
+  assert.equal(currentDealMonth(new Date(2026, 5, 24)), '2026-05') // 6월 -> 직전 5월
+  assert.equal(currentDealMonth(new Date(2026, 0, 15)), '2025-12') // 1월 -> 전년 12월
+})
 
 test('capabilities() returns exactly the declared filter keys', () => {
   assert.deepEqual(capabilities(), [

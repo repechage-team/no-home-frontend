@@ -5,14 +5,9 @@ import {
   clampToMaxLength,
   getConversationId,
   messageLength,
-  parseChatResponse,
 } from '../chat/chatClient.js'
-import { parseAgentResponse, parseAssistantResponse } from '../chat/agentClient.js'
+import { parseAssistantResponse } from '../chat/agentClient.js'
 import { capabilities } from '../houseSearchParams.js'
-
-// 피처 플래그: 켜지면 단일 /api/ai/assistant(tool calling)로 통합 호출하고 모드 토글을 숨긴다.
-// 꺼지면 기존 질문/실행 분리 경로를 유지한다(Phase 3에서 레거시 제거).
-const ASSISTANT_ENABLED = import.meta.env.VITE_AI_ASSISTANT_ENABLED === 'true'
 
 export default {
   name: 'ChatWidget',
@@ -44,7 +39,6 @@ export default {
   data() {
     return {
       open: false,
-      mode: 'question', // 'question' | 'agent'
       input: '',
       loading: false,
       loadingStatus: '',
@@ -71,9 +65,6 @@ export default {
         }
       }
       return ''
-    },
-    assistantEnabled() {
-      return ASSISTANT_ENABLED
     },
   },
   watch: {
@@ -106,13 +97,6 @@ export default {
       if (this.open) {
         this.$nextTick(() => this.focusInput())
       }
-    },
-    setMode(mode) {
-      if (this.mode === mode || this.loading) {
-        return
-      }
-      this.mode = mode
-      this.$nextTick(() => this.focusInput())
     },
     focusInput() {
       const el = this.$refs.input
@@ -161,86 +145,9 @@ export default {
       this.startProgress()
       this.scrollToBottom()
 
-      if (this.assistantEnabled) {
-        await this.sendAssistant(message)
-      } else if (this.mode === 'agent') {
-        await this.sendAgent(message)
-      } else {
-        await this.sendQuestion(message)
-      }
+      await this.sendAssistant(message)
     },
-    async sendQuestion(message) {
-      try {
-        const response = await fetch('/api/ai/chat', {
-          method: 'POST',
-          headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-          },
-          credentials: 'include',
-          body: JSON.stringify({ message, conversationId: getConversationId() }),
-        })
-        const body = await response.json().catch(() => null)
-        const result = parseChatResponse({
-          status: response.status,
-          ok: response.ok,
-          body,
-          retryAfter: response.headers.get('Retry-After'),
-        })
-        this.messages.push({ role: 'assistant', text: result.text })
-      } catch (error) {
-        this.messages.push({ role: 'assistant', text: error.message || '오류가 발생했습니다.' })
-      } finally {
-        this.clearProgressTimers()
-        this.loading = false
-        this.scrollToBottom()
-      }
-    },
-    async sendAgent(message) {
-      try {
-        const response = await fetch('/api/ai/agent', {
-          method: 'POST',
-          headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-          },
-          credentials: 'include',
-          body: JSON.stringify({
-            message,
-            conversationId: getConversationId(),
-            capabilities: capabilities(),
-            currentFilters: this.currentFilters,
-            currentPage: this.currentPage,
-            totalPages: this.totalPages,
-          }),
-        })
-        const body = await response.json().catch(() => null)
-        const result = parseAgentResponse({
-          status: response.status,
-          ok: response.ok,
-          body,
-          retryAfter: response.headers.get('Retry-After'),
-        })
-        if (result.kind === 'command') {
-          // 명령 적용은 App.vue가 수행하고 권위 있는 요약을 agentResult로 돌려준다.
-          // 그때까지 로딩을 유지하고, 진행 표시만 정적 문구로 바꾼다.
-          this.clearProgressTimers()
-          this.loadingStatus = '요청을 처리하고 있어요…'
-          this.$emit('agent-command', result.command)
-        } else {
-          this.clearProgressTimers()
-          this.loading = false
-          this.messages.push({ role: 'assistant', text: result.text })
-          this.scrollToBottom()
-        }
-      } catch (error) {
-        this.clearProgressTimers()
-        this.loading = false
-        this.messages.push({ role: 'assistant', text: error.message || '오류가 발생했습니다.' })
-        this.scrollToBottom()
-      }
-    },
-    // 통합 경로: 한 번의 /assistant 호출에서 LLM이 답변(answer)/명령(command)으로 분기한다.
+    // 한 번의 /assistant 호출에서 LLM이 답변(answer)/명령(command)으로 분기한다.
     async sendAssistant(message) {
       try {
         const response = await fetch('/api/ai/assistant', {
@@ -307,25 +214,6 @@ export default {
         <button class="chat-close" type="button" aria-label="닫기" @click="toggle">✕</button>
       </header>
 
-      <div v-if="!assistantEnabled" class="chat-mode" role="group" aria-label="모드 선택">
-        <button
-          type="button"
-          class="chat-mode-btn"
-          :class="{ 'is-active': mode === 'question' }"
-          :aria-pressed="mode === 'question'"
-          :disabled="loading"
-          @click="setMode('question')"
-        >질문</button>
-        <button
-          type="button"
-          class="chat-mode-btn"
-          :class="{ 'is-active': mode === 'agent' }"
-          :aria-pressed="mode === 'agent'"
-          :disabled="loading"
-          @click="setMode('agent')"
-        >실행</button>
-      </div>
-
       <div ref="scroll" class="chat-messages">
         <div
           v-for="(msg, index) in messages"
@@ -360,7 +248,7 @@ export default {
             class="chat-input"
             type="text"
             aria-describedby="chat-input-hint chat-input-counter"
-            :placeholder="loading ? '답변을 기다리는 중입니다' : (mode === 'agent' ? '예) 마포구 2024년 3월로 검색해줘' : '예) 마포구 2024년 3월 실거래가')"
+            :placeholder="loading ? '답변을 기다리는 중입니다' : '예) 마포구 2024년 3월 전세 시세 / 강남구로 검색해줘'"
             :disabled="loading"
           />
           <span id="chat-input-counter" class="chat-counter">{{ inputLength }}/{{ maxLength }}</span>
@@ -427,37 +315,6 @@ export default {
   color: #ffffff;
   font-size: 16px;
   cursor: pointer;
-}
-
-.chat-mode {
-  display: flex;
-  gap: 6px;
-  padding: 8px 14px;
-  background: var(--surface, #ffffff);
-  border-bottom: 1px solid var(--border-soft, #d9e1e8);
-}
-
-.chat-mode-btn {
-  flex: 1;
-  border: 1px solid var(--border-soft, #d9e1e8);
-  border-radius: 999px;
-  padding: 5px 0;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text-muted, #5a6678);
-  background: var(--surface-tint, #f8fafb);
-  cursor: pointer;
-}
-
-.chat-mode-btn.is-active {
-  color: #ffffff;
-  background: var(--primary-green, #1f6f5b);
-  border-color: var(--primary-green, #1f6f5b);
-}
-
-.chat-mode-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 
 .chat-messages {

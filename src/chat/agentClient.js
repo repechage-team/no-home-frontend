@@ -11,27 +11,6 @@ function retryHint(retryAfter) {
     : ''
 }
 
-// Map an /api/ai/agent response into either a command or an error.
-// Returns { kind: 'command', command } on success, otherwise { kind: 'error', text }.
-// 상태 매핑은 parseChatResponse와 동일(401/429/!ok/503/504). 성공 시 data가 AgentCommand.
-export function parseAgentResponse({ status, ok, body, retryAfter } = {}) {
-  if (status === 401) {
-    return { kind: 'error', text: '로그인이 필요합니다.' }
-  }
-  if (status === 429) {
-    const base = body?.message || '요청이 너무 많습니다.'
-    return { kind: 'error', text: `${base}${retryHint(retryAfter)}` }
-  }
-  if (!ok || body?.success === false) {
-    return { kind: 'error', text: body?.message || `요청 실패 (${status})` }
-  }
-  const command = body?.data
-  if (!command || typeof command !== 'object') {
-    return { kind: 'error', text: '명령을 해석하지 못했습니다.' }
-  }
-  return { kind: 'command', command }
-}
-
 // Map a unified /api/ai/assistant response into a chat message.
 // The backend returns AssistantResponse { type:'answer'|'command', answer, command, notice }.
 // Returns { kind:'answer', text } | { kind:'command', command, notice } | { kind:'error', text }

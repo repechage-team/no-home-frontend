@@ -15,6 +15,16 @@ export const emptyFilters = () => ({
   maxMonthlyRent: '',
 })
 
+// 검색 폼의 기본 거래월(YYYY-MM). 실거래 공개가 1개월가량 지연되므로 데이터 가용성이 높은
+// 직전월을 기본값으로 쓴다. 거래월이 비면 라이브 조회가 동작하지 않아 결과가 0건이 되는 것을 막는다.
+// (now는 호출 시점 기준 — 순수 emptyFilters를 오염시키지 않도록 별도 헬퍼로 분리)
+export const currentDealMonth = (now = new Date()) => {
+  const base = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+  const year = base.getFullYear()
+  const month = String(base.getMonth() + 1).padStart(2, '0')
+  return `${year}-${month}`
+}
+
 export const seoulLawdCodes = {
   종로구: '11110',
   중구: '11140',

@@ -3,6 +3,7 @@ import {
   applyAgentFilters,
   buildHousePriceRangeRequests,
   buildHouseSearchRequests,
+  currentDealMonth,
   emptyFilters,
   isSeoul,
   seoulLawdCodes,
@@ -13,6 +14,14 @@ import { resolvePaginateTarget, resolveItemTarget } from './chat/agentActions'
 import ChatWidget from './components/ChatWidget.vue'
 
 const SEARCH_ALL_FETCH_SIZE = 100
+
+// 검색 폼 초기/리셋 상태. 거래월은 최신월(직전월) 기본값으로 채워, 거래월 미지정 검색(예: AI '강남구 검색')이
+// 라이브 조회 없이 0건이 되는 것을 막는다. emptyFilters는 순수 유지하고 여기서만 거래월을 주입한다.
+const initialFilters = () => ({
+  ...emptyFilters(),
+  startDealMonth: currentDealMonth(),
+  endDealMonth: currentDealMonth(),
+})
 const SEARCH_REQUEST_TIMEOUT_MS = 25000
 const AUTO_IMPORT_REQUEST_TIMEOUT_MS = SEARCH_REQUEST_TIMEOUT_MS
 const REGION_REQUEST_TIMEOUT_MS = 10000
@@ -216,7 +225,7 @@ export default {
   },
   data() {
     return {
-      filters: emptyFilters(),
+      filters: initialFilters(),
       items: [],
       totalCount: null,
       searchPage: 1,
@@ -1478,7 +1487,7 @@ export default {
     resetSearch() {
       this.searchRequestId += 1
       this.legalDongRequestId += 1
-      this.filters = emptyFilters()
+      this.filters = initialFilters()
       this.legalDongs = []
       this.legalDongLoading = false
       this.legalDongError = ''
