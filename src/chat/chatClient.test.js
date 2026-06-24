@@ -6,6 +6,11 @@ import {
   messageLength,
   clampToMaxLength,
   getConversationId,
+  clampPanelSize,
+  loadPanelSize,
+  savePanelSize,
+  DEFAULT_PANEL_WIDTH,
+  DEFAULT_PANEL_HEIGHT,
 } from './chatClient.js'
 
 function fakeStorage() {
@@ -68,4 +73,46 @@ test('PROGRESS_STAGES has an immediate first stage and later delays', () => {
 
 test('MAX_MESSAGE_LENGTH is 500', () => {
   assert.equal(MAX_MESSAGE_LENGTH, 500)
+})
+
+test('clampPanelSize keeps a size within min/max bounds', () => {
+  assert.deepEqual(clampPanelSize(400, 500, 2000, 2000), { width: 400, height: 500 })
+})
+
+test('clampPanelSize enforces the minimum size', () => {
+  assert.deepEqual(clampPanelSize(100, 100, 2000, 2000), { width: 300, height: 360 })
+})
+
+test('clampPanelSize enforces the maximum (viewport) size', () => {
+  assert.deepEqual(clampPanelSize(5000, 5000, 800, 600), { width: 800, height: 600 })
+})
+
+test('clampPanelSize falls back to defaults for non-finite input', () => {
+  assert.deepEqual(clampPanelSize(NaN, undefined), {
+    width: DEFAULT_PANEL_WIDTH,
+    height: DEFAULT_PANEL_HEIGHT,
+  })
+})
+
+test('loadPanelSize restores a saved size and falls back to defaults', () => {
+  const storage = fakeStorage()
+  assert.deepEqual(loadPanelSize(storage), { width: DEFAULT_PANEL_WIDTH, height: DEFAULT_PANEL_HEIGHT })
+  storage.setItem('no-home.ai.panel-size', JSON.stringify({ width: 420, height: 600 }))
+  assert.deepEqual(loadPanelSize(storage), { width: 420, height: 600 })
+})
+
+test('loadPanelSize ignores corrupt data and clamps restored size', () => {
+  const storage = fakeStorage()
+  storage.setItem('no-home.ai.panel-size', '{ not json')
+  assert.deepEqual(loadPanelSize(storage), { width: DEFAULT_PANEL_WIDTH, height: DEFAULT_PANEL_HEIGHT })
+  storage.setItem('no-home.ai.panel-size', JSON.stringify({ width: 50, height: 50 }))
+  assert.deepEqual(loadPanelSize(storage), { width: 300, height: 360 })
+})
+
+test('savePanelSize writes the size and is tolerant of unavailable storage', () => {
+  const storage = fakeStorage()
+  savePanelSize(420, 600, storage)
+  assert.deepEqual(JSON.parse(storage.getItem('no-home.ai.panel-size')), { width: 420, height: 600 })
+  const throwing = { setItem: () => { throw new Error('blocked') } }
+  assert.doesNotThrow(() => savePanelSize(420, 600, throwing))
 })

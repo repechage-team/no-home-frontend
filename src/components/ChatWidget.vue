@@ -2,10 +2,16 @@
 import {
   MAX_MESSAGE_LENGTH,
   PROGRESS_STAGES,
+  clampPanelSize,
   clampToMaxLength,
   getConversationId,
+  loadPanelSize,
   messageLength,
+  savePanelSize,
 } from '../chat/chatClient.js'
+
+// 리사이즈 시 화면 가장자리 여백(.chat-widget의 right/bottom 20px과 대칭).
+const VIEWPORT_MARGIN = 40
 import { parseAssistantResponse } from '../chat/agentClient.js'
 import { capabilities } from '../houseSearchParams.js'
 
@@ -37,12 +43,17 @@ export default {
   },
   emits: ['agent-command'],
   data() {
+    const size = loadPanelSize()
     return {
       open: false,
       input: '',
       loading: false,
       loadingStatus: '',
       progressTimers: [],
+      // 드래그 리사이즈된 패널 크기(localStorage 복원, 없으면 기본 340x480).
+      panelWidth: size.width,
+      panelHeight: size.height,
+      resizeState: null,
       messages: [
         {
           role: 'assistant',
@@ -65,6 +76,9 @@ export default {
         }
       }
       return ''
+    },
+    panelStyle() {
+      return { width: `${this.panelWidth}px`, height: `${this.panelHeight}px` }
     },
   },
   watch: {
@@ -90,6 +104,7 @@ export default {
   },
   beforeUnmount() {
     this.clearProgressTimers()
+    this.stopResize()
   },
   methods: {
     toggle() {
@@ -103,6 +118,53 @@ export default {
       if (el) {
         el.focus()
       }
+    },
+    // 좌상단 핸들 드래그로 패널 크기 조절(위젯은 우하단 고정 → 좌·상으로 확장). 마우스·터치 공통.
+    startResize(event) {
+      const point = event.touches ? event.touches[0] : event
+      this.resizeState = {
+        startX: point.clientX,
+        startY: point.clientY,
+        startW: this.panelWidth,
+        startH: this.panelHeight,
+      }
+      document.addEventListener('mousemove', this.onResize)
+      document.addEventListener('mouseup', this.stopResize)
+      document.addEventListener('touchmove', this.onResize, { passive: false })
+      document.addEventListener('touchend', this.stopResize)
+      document.body.style.userSelect = 'none'
+      event.preventDefault()
+    },
+    onResize(event) {
+      if (!this.resizeState) {
+        return
+      }
+      if (event.cancelable) {
+        event.preventDefault()
+      }
+      const point = event.touches ? event.touches[0] : event
+      const dw = this.resizeState.startX - point.clientX
+      const dh = this.resizeState.startY - point.clientY
+      const { width, height } = clampPanelSize(
+        this.resizeState.startW + dw,
+        this.resizeState.startH + dh,
+        window.innerWidth - VIEWPORT_MARGIN,
+        window.innerHeight - VIEWPORT_MARGIN,
+      )
+      this.panelWidth = width
+      this.panelHeight = height
+    },
+    stopResize() {
+      if (!this.resizeState) {
+        return
+      }
+      this.resizeState = null
+      document.removeEventListener('mousemove', this.onResize)
+      document.removeEventListener('mouseup', this.stopResize)
+      document.removeEventListener('touchmove', this.onResize)
+      document.removeEventListener('touchend', this.stopResize)
+      document.body.style.userSelect = ''
+      savePanelSize(this.panelWidth, this.panelHeight)
     },
     scrollToBottom() {
       this.$nextTick(() => {
@@ -208,7 +270,15 @@ export default {
       💬 AI
     </button>
 
-    <section v-else class="chat-panel" aria-label="AI 챗봇" :aria-busy="loading">
+    <section v-else class="chat-panel" aria-label="AI 챗봇" :aria-busy="loading" :style="panelStyle">
+      <div
+        class="chat-resize-handle"
+        role="separator"
+        aria-label="창 크기 조절"
+        title="드래그하여 창 크기 조절"
+        @mousedown="startResize"
+        @touchstart="startResize"
+      ></div>
       <header class="chat-header">
         <span>NoHome AI 도우미</span>
         <button class="chat-close" type="button" aria-label="닫기" @click="toggle">✕</button>
@@ -286,17 +356,40 @@ export default {
 }
 
 .chat-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
-  width: 340px;
+  /* width/height는 인라인 :style(panelStyle)로 드래그 리사이즈. 아래는 화면 밖 확장 방지 안전망. */
   max-width: calc(100vw - 40px);
-  height: 480px;
   max-height: calc(100vh - 40px);
   background: var(--surface, #ffffff);
   border: 1px solid var(--border-soft, #d9e1e8);
   border-radius: 14px;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
   overflow: hidden;
+}
+
+/* 좌상단 리사이즈 핸들(위젯이 우하단 고정이라 좌·상으로 확장). */
+.chat-resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  z-index: 2;
+  touch-action: none;
+}
+.chat-resize-handle::before {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 7px;
+  height: 7px;
+  border-top: 2px solid rgba(255, 255, 255, 0.85);
+  border-left: 2px solid rgba(255, 255, 255, 0.85);
+  border-top-left-radius: 3px;
 }
 
 .chat-header {
