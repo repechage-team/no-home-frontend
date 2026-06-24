@@ -57,7 +57,11 @@ const SELECTED_MARKER_IMAGE_URL = `data:image/svg+xml;charset=UTF-8,${encodeURIC
 </svg>
 `)}`
 const KAKAO_MAP_API_KEY = import.meta.env.VITE_KAKAO_MAP_API_KEY
-const KAKAO_MAP_SDK_ERROR_MESSAGE = 'Kakao Map SDK 로드에 실패했습니다. Kakao Developers의 Web 플랫폼 사이트 도메인에 현재 주소를 등록해 주세요.'
+const NOTICE_ADMIN_EMAILS = (import.meta.env.VITE_NOTICE_ADMIN_EMAILS || 'admin@nohome.local,admin@example.com')
+  .split(',')
+  .map((email) => email.trim().toLowerCase())
+  .filter(Boolean)
+const KAKAO_MAP_SDK_ERROR_MESSAGE = 'Kakao Map SDK 로드에 실패했습니다. JavaScript 키인지 확인하고 Kakao Developers Web 플랫폼 사이트 도메인에 현재 주소를 등록해 주세요.'
 let kakaoMapsSdkPromise = null
 
 const fieldText = (value, fallback = '-') => {
@@ -156,7 +160,7 @@ const loadKakaoMapsSdk = () => {
     const existingScript = document.querySelector('script[data-kakao-map-sdk="true"]')
     const finishLoad = () => {
       if (!window.kakao?.maps) {
-        reject(new Error('Kakao Map SDK를 불러오지 못했습니다.'))
+        reject(new Error(KAKAO_MAP_SDK_ERROR_MESSAGE))
         return
       }
 
@@ -279,9 +283,23 @@ export default {
         name: '',
         phone: '',
       },
+      profileEditing: false,
       memberSearchKeyword: '',
       memberSearchResults: [],
+      interestRegions: [],
+      interestRegionLoading: false,
+      interestRegionMessage: '',
+      interestRegionError: '',
       deleteConfirm: '',
+      notices: [],
+      noticeLoading: false,
+      noticeMessage: '',
+      noticeError: '',
+      noticeEditingId: null,
+      noticeForm: {
+        title: '',
+        content: '',
+      },
       kakao: null,
       map: null,
       defaultMarkerImage: null,
@@ -309,6 +327,9 @@ export default {
       }
 
       return `${fieldText(this.member.name, this.member.email)} · ${this.member.email}`
+    },
+    isNoticeAdmin() {
+      return Boolean(this.member?.email && NOTICE_ADMIN_EMAILS.includes(String(this.member.email).trim().toLowerCase()))
     },
     visibleCountLabel() {
       if (this.loading) {
@@ -393,6 +414,13 @@ export default {
     },
     legalDongDisabled() {
       return !this.selectedLawdCd || this.legalDongLoading || this.legalDongs.length === 0
+    },
+    canSaveInterestRegion() {
+      return Boolean(this.member && this.selectedLawdCd && this.filters.umdNm && !this.interestRegionLoading)
+    },
+    selectedInterestRegionLabel() {
+      const parts = [this.filters.sido, this.filters.sigungu, this.filters.umdNm].filter(Boolean)
+      return parts.length ? parts.join(' ') : '관심지역'
     },
     sortDisabled() {
       return !this.filters.sido
@@ -940,12 +968,248 @@ export default {
       const body = await response.json().catch(() => null)
 
       if (!response.ok || body?.success === false) {
-        const error = new Error(body?.message || `요청 실패 (${response.status})`)
+        const error = new Error(this.apiErrorMessage(response.status, body?.message))
         error.status = response.status
         throw error
       }
 
       return body?.data ?? body ?? {}
+    },
+    apiErrorMessage(status, message) {
+      if (message) {
+        return message
+      }
+      if (status === 401) {
+        return '로그인 후 이용할 수 있습니다.'
+      }
+      if (status === 403) {
+        return '권한이 없습니다.'
+      }
+      if (status === 404) {
+        return '요청한 정보를 찾을 수 없습니다.'
+      }
+      return `요청 처리에 실패했습니다. (${status})`
+    },
+    async requestNoticeApi(path, options = {}) {
+      return this.requestMemberApi(path, options)
+    },
+    async requestInterestRegionApi(path, options = {}) {
+      return this.requestMemberApi(path, options)
+    },
+    async loadInterestRegions({ silent = false } = {}) {
+      if (!this.member) {
+        this.interestRegions = []
+        this.interestRegionLoading = false
+        return
+      }
+
+      this.interestRegionLoading = true
+      if (!silent) {
+        this.interestRegionError = ''
+        this.interestRegionMessage = ''
+      }
+
+      try {
+        const regions = await this.requestInterestRegionApi('/api/interest-regions')
+        this.interestRegions = Array.isArray(regions) ? regions : []
+      } catch (exception) {
+        this.interestRegions = []
+        if (!silent) {
+          this.interestRegionError = exception instanceof Error
+            ? exception.message
+            : '관심지역을 불러오지 못했습니다.'
+        }
+      } finally {
+        this.interestRegionLoading = false
+      }
+    },
+    async saveInterestRegion() {
+      if (!this.member) {
+        this.interestRegionError = '로그인 후 관심지역을 저장할 수 있습니다.'
+        return
+      }
+      if (!this.selectedLawdCd || !this.filters.umdNm) {
+        this.interestRegionError = '시군구와 읍면동을 선택해 주세요.'
+        return
+      }
+
+      this.interestRegionLoading = true
+      this.interestRegionError = ''
+      this.interestRegionMessage = ''
+
+      try {
+        await this.requestInterestRegionApi('/api/interest-regions', {
+          method: 'POST',
+          body: JSON.stringify({
+            lawdCd: this.selectedLawdCd,
+            sido: this.filters.sido,
+            sigungu: this.filters.sigungu,
+            umdNm: this.filters.umdNm,
+          }),
+        })
+        this.interestRegionMessage = `${this.selectedInterestRegionLabel}을 저장했습니다.`
+        await this.loadInterestRegions({ silent: true })
+      } catch (exception) {
+        this.interestRegionError = exception instanceof Error
+          ? exception.message
+          : '관심지역 저장에 실패했습니다.'
+      } finally {
+        this.interestRegionLoading = false
+      }
+    },
+    applyInterestRegion(region) {
+      if (!region) {
+        return
+      }
+
+      this.filters.sido = region.sido || ''
+      this.filters.sigungu = region.sigungu || ''
+      this.filters.umdNm = region.umdNm || ''
+      this.searchRequestId += 1
+      this.loading = false
+      this.legalDongs = []
+      this.legalDongError = ''
+      this.loadLegalDongs(region.lawdCd || this.selectedLawdCd)
+      this.interestRegionMessage = `${this.displayInterestRegion(region)}을 검색 조건에 적용했습니다.`
+      this.interestRegionError = ''
+    },
+    async deleteInterestRegion(region) {
+      if (!region?.interestRegionId) {
+        return
+      }
+
+      this.interestRegionLoading = true
+      this.interestRegionError = ''
+      this.interestRegionMessage = ''
+
+      try {
+        await this.requestInterestRegionApi(`/api/interest-regions/${region.interestRegionId}`, {
+          method: 'DELETE',
+        })
+        this.interestRegionMessage = `${this.displayInterestRegion(region)}을 삭제했습니다.`
+        await this.loadInterestRegions({ silent: true })
+      } catch (exception) {
+        this.interestRegionError = exception instanceof Error
+          ? exception.message
+          : '관심지역 삭제에 실패했습니다.'
+      } finally {
+        this.interestRegionLoading = false
+      }
+    },
+    displayInterestRegion(region) {
+      return [region?.sido, region?.sigungu, region?.umdNm]
+        .filter(Boolean)
+        .map((value) => fieldText(value))
+        .join(' ')
+    },
+    async loadNotices({ silent = false } = {}) {
+      this.noticeLoading = true
+      if (!silent) {
+        this.noticeError = ''
+      }
+
+      try {
+        const notices = await this.requestNoticeApi('/api/notices?limit=10')
+        this.notices = Array.isArray(notices) ? notices : []
+      } catch (exception) {
+        this.notices = []
+        if (!silent) {
+          this.noticeError = exception instanceof Error
+            ? exception.message
+            : '공지사항을 불러오지 못했습니다.'
+        }
+      } finally {
+        this.noticeLoading = false
+      }
+    },
+    resetNoticeForm() {
+      this.noticeEditingId = null
+      this.noticeForm = {
+        title: '',
+        content: '',
+      }
+    },
+    editNotice(notice) {
+      this.noticeEditingId = notice.noticeId
+      this.noticeForm = {
+        title: notice.title || '',
+        content: notice.content || '',
+      }
+      this.noticeMessage = ''
+      this.noticeError = ''
+    },
+    async saveNotice() {
+      if (!this.isNoticeAdmin) {
+        this.noticeError = '관리자만 공지사항을 작성할 수 있습니다.'
+        return
+      }
+
+      this.noticeLoading = true
+      this.noticeError = ''
+      this.noticeMessage = ''
+
+      try {
+        const path = this.noticeEditingId
+          ? `/api/notices/${this.noticeEditingId}`
+          : '/api/notices'
+        await this.requestNoticeApi(path, {
+          method: this.noticeEditingId ? 'PUT' : 'POST',
+          body: JSON.stringify(this.noticeForm),
+        })
+        this.noticeMessage = this.noticeEditingId ? '공지사항이 수정되었습니다.' : '공지사항이 등록되었습니다.'
+        this.resetNoticeForm()
+        await this.loadNotices({ silent: false })
+      } catch (exception) {
+        this.noticeError = exception instanceof Error
+          ? exception.message
+          : '공지사항 저장에 실패했습니다.'
+      } finally {
+        this.noticeLoading = false
+      }
+    },
+    async deleteNotice(notice) {
+      if (!notice?.noticeId) {
+        return
+      }
+
+      this.noticeLoading = true
+      this.noticeError = ''
+      this.noticeMessage = ''
+
+      try {
+        await this.requestNoticeApi(`/api/notices/${notice.noticeId}`, {
+          method: 'DELETE',
+        })
+        if (this.noticeEditingId === notice.noticeId) {
+          this.resetNoticeForm()
+        }
+        this.noticeMessage = '공지사항이 삭제되었습니다.'
+        await this.loadNotices({ silent: false })
+      } catch (exception) {
+        this.noticeError = exception instanceof Error
+          ? exception.message
+          : '공지사항 삭제에 실패했습니다.'
+      } finally {
+        this.noticeLoading = false
+      }
+    },
+    displayNoticeDate(notice) {
+      const value = notice?.updatedAt || notice?.createdAt
+      if (!value) {
+        return '-'
+      }
+
+      const date = new Date(value)
+      if (Number.isNaN(date.getTime())) {
+        return fieldText(value)
+      }
+
+      return new Intl.DateTimeFormat('ko-KR', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(date)
     },
     async loadCurrentMember({ silent = true } = {}) {
       this.memberLoading = true
@@ -957,6 +1221,7 @@ export default {
       try {
         const member = await this.requestMemberApi('/api/members/me')
         this.setCurrentMember(member)
+        await this.loadInterestRegions({ silent: true })
       } catch (exception) {
         if (exception?.status === 401) {
           this.setCurrentMember(null)
@@ -981,10 +1246,25 @@ export default {
         name: member?.name || '',
         phone: member?.phone || '',
       }
+      if (!member || !this.isNoticeAdmin) {
+        this.clearMemberSearch()
+      }
+      if (!member) {
+        this.interestRegions = []
+        this.interestRegionMessage = ''
+        this.interestRegionError = ''
+        if (this.activePage === 'member-search') {
+          this.activePage = 'search'
+        }
+      } else if (this.activePage === 'member-search' && !this.isNoticeAdmin) {
+        this.activePage = 'search'
+      }
     },
     openAccountPanel(mode = this.member ? 'profile' : 'login') {
       this.accountMode = mode
-      this.accountPanelOpen = true
+      this.activePage = 'account'
+      this.accountPanelOpen = false
+      this.profileEditing = false
       this.memberMessage = ''
       this.memberError = ''
       if (mode === 'profile') {
@@ -992,16 +1272,20 @@ export default {
       }
     },
     closeAccountPanel() {
-      this.accountPanelOpen = false
+      this.activePage = 'search'
       this.memberMessage = ''
       this.memberError = ''
       this.deleteConfirm = ''
+      this.profileEditing = false
+      this.clearMemberSearch()
     },
     switchAccountMode(mode) {
       this.accountMode = mode
       this.memberMessage = ''
       this.memberError = ''
       this.deleteConfirm = ''
+      this.profileEditing = false
+      this.clearMemberSearch()
       if (mode === 'profile') {
         this.loadCurrentMember({ silent: false })
       }
@@ -1045,9 +1329,13 @@ export default {
           body: JSON.stringify(this.loginForm),
         })
         this.setCurrentMember(member)
+        await this.loadInterestRegions({ silent: true })
         this.loginForm.password = ''
         this.accountMode = 'profile'
         this.memberMessage = '로그인되었습니다.'
+        if (this.activePage === 'notice') {
+          await this.loadNotices({ silent: true })
+        }
       } catch (exception) {
         this.memberError = exception instanceof Error
           ? exception.message
@@ -1094,10 +1382,22 @@ export default {
           method: 'POST',
         })
         this.setCurrentMember(null)
+        this.resetNoticeForm()
+        this.clearMemberSearch()
+        this.profileEditing = false
+        if (this.activePage === 'notice') {
+          await this.loadNotices({ silent: true })
+        }
         this.accountMode = 'login'
         this.memberMessage = '로그아웃되었습니다.'
       } catch (exception) {
         this.setCurrentMember(null)
+        this.resetNoticeForm()
+        this.clearMemberSearch()
+        this.profileEditing = false
+        if (this.activePage === 'notice') {
+          await this.loadNotices({ silent: true })
+        }
         this.accountMode = 'login'
         this.memberMessage = '로그인 상태를 정리했습니다.'
       } finally {
@@ -1115,6 +1415,7 @@ export default {
           body: JSON.stringify(this.profileForm),
         })
         this.setCurrentMember(member)
+        this.profileEditing = false
         this.memberMessage = '내 정보가 수정되었습니다.'
       } catch (exception) {
         this.memberError = exception instanceof Error
@@ -1124,7 +1425,29 @@ export default {
         this.memberLoading = false
       }
     },
+    startProfileEdit() {
+      this.profileForm = {
+        name: this.member?.name || '',
+        phone: this.member?.phone || '',
+      }
+      this.memberMessage = ''
+      this.memberError = ''
+      this.profileEditing = true
+    },
+    cancelProfileEdit() {
+      this.profileForm = {
+        name: this.member?.name || '',
+        phone: this.member?.phone || '',
+      }
+      this.profileEditing = false
+      this.memberError = ''
+    },
     async searchMembers() {
+      if (!this.isNoticeAdmin) {
+        this.memberError = '관리자만 회원 검색을 사용할 수 있습니다.'
+        return
+      }
+
       const keyword = this.memberSearchKeyword.trim()
       if (!keyword) {
         this.memberError = '검색어를 입력해 주세요.'
@@ -1147,6 +1470,10 @@ export default {
       } finally {
         this.memberLoading = false
       }
+    },
+    clearMemberSearch() {
+      this.memberSearchKeyword = ''
+      this.memberSearchResults = []
     },
     async deleteMember() {
       if (this.deleteConfirm !== '삭제') {
@@ -1930,7 +2257,7 @@ export default {
   <div class="app-shell">
     <header class="top-bar">
       <div class="brand">
-        <button class="brand-mark" type="button" aria-label="검색 초기화" @click="resetSearch">
+        <button class="brand-mark" type="button" aria-label="검색 화면" @click="openSearchPage">
           <img src="/nohome-logo.png" alt="" />
         </button>
         <div>
@@ -1938,6 +2265,10 @@ export default {
           <h1>NoHome 실거래가 검색</h1>
         </div>
       </div>
+      <nav class="top-nav" aria-label="주요 화면">
+        <button class="nav-tab icon-tab" type="button" :class="{ 'is-active': activePage === 'notice' }" aria-label="공지사항" title="공지사항" @click="openNoticePage">📢</button>
+        <button v-if="isNoticeAdmin" class="nav-tab" type="button" :class="{ 'is-active': activePage === 'member-search' }" @click="openMemberSearchPage">회원 검색</button>
+      </nav>
       <div class="account-actions" aria-label="회원 메뉴">
         <span class="account-summary">{{ accountSummary }}</span>
         <template v-if="member">
@@ -1946,96 +2277,11 @@ export default {
         </template>
         <template v-else>
           <button class="account-button" type="button" @click="openAccountPanel('login')">로그인</button>
-          <button class="secondary-button compact-button" type="button" @click="openAccountPanel('signup')">회원가입</button>
         </template>
       </div>
     </header>
 
-    <section v-if="accountPanelOpen" class="account-panel" aria-label="회원 관리">
-      <div class="account-panel-header">
-        <div>
-          <p class="section-kicker">Account</p>
-          <h2>회원 관리</h2>
-        </div>
-        <button class="back-button compact-button" type="button" @click="closeAccountPanel">닫기</button>
-      </div>
-
-      <div v-if="!member" class="account-tabs" role="tablist" aria-label="인증 선택">
-        <button class="secondary-button compact-button" type="button" :class="{ 'is-active': accountMode === 'login' }" @click="switchAccountMode('login')">로그인</button>
-        <button class="secondary-button compact-button" type="button" :class="{ 'is-active': accountMode === 'signup' }" @click="switchAccountMode('signup')">회원가입</button>
-        <button class="secondary-button compact-button" type="button" :class="{ 'is-active': accountMode === 'password-reset' }" @click="switchAccountMode('password-reset')">비밀번호 찾기</button>
-      </div>
-
-      <p v-if="memberMessage" class="account-message">{{ memberMessage }}</p>
-      <p v-if="memberError" class="account-message is-error">{{ memberError }}</p>
-
-      <form v-if="accountMode === 'login' && !member" class="account-form" @submit.prevent="loginMember">
-        <label><span>이메일</span><input v-model.trim="loginForm.email" type="email" autocomplete="email" required /></label>
-        <label><span>비밀번호</span><input v-model="loginForm.password" type="password" autocomplete="current-password" required /></label>
-        <div class="actions">
-          <button class="primary-button" type="submit" :disabled="memberLoading">로그인</button>
-          <button class="secondary-button" type="button" @click="switchAccountMode('signup')">회원가입으로</button>
-        </div>
-      </form>
-
-      <form v-else-if="accountMode === 'password-reset' && !member" class="account-form" @submit.prevent="resetPassword">
-        <label><span>이메일</span><input v-model.trim="passwordResetForm.email" type="email" autocomplete="email" required /></label>
-        <label><span>이름</span><input v-model.trim="passwordResetForm.name" type="text" autocomplete="name" required /></label>
-        <label><span>전화번호</span><input v-model.trim="passwordResetForm.phone" type="tel" autocomplete="tel" /></label>
-        <label><span>새 비밀번호</span><input v-model="passwordResetForm.newPassword" type="password" autocomplete="new-password" required /></label>
-        <div class="actions">
-          <button class="primary-button" type="submit" :disabled="memberLoading">비밀번호 변경</button>
-          <button class="secondary-button" type="button" @click="switchAccountMode('login')">로그인으로</button>
-        </div>
-      </form>
-
-      <form v-else-if="accountMode === 'signup' && !member" class="account-form" @submit.prevent="signupMember">
-        <label><span>이메일</span><input v-model.trim="signupForm.email" type="email" autocomplete="email" required /></label>
-        <label><span>비밀번호</span><input v-model="signupForm.password" type="password" autocomplete="new-password" required /></label>
-        <label><span>이름</span><input v-model.trim="signupForm.name" type="text" autocomplete="name" required /></label>
-        <label><span>전화번호</span><input v-model.trim="signupForm.phone" type="tel" autocomplete="tel" /></label>
-        <div class="actions">
-          <button class="primary-button" type="submit" :disabled="memberLoading">회원가입</button>
-          <button class="secondary-button" type="button" @click="switchAccountMode('login')">로그인으로</button>
-        </div>
-      </form>
-
-      <div v-else-if="member" class="profile-layout">
-        <dl class="detail-list">
-          <div><dt>이메일</dt><dd>{{ member.email }}</dd></div>
-          <div><dt>이름</dt><dd>{{ member.name }}</dd></div>
-          <div><dt>전화번호</dt><dd>{{ member.phone || '-' }}</dd></div>
-        </dl>
-        <form class="account-form" @submit.prevent="updateMember">
-          <label><span>이름</span><input v-model.trim="profileForm.name" type="text" required /></label>
-          <label><span>전화번호</span><input v-model.trim="profileForm.phone" type="tel" /></label>
-          <div class="actions">
-            <button class="primary-button" type="submit" :disabled="memberLoading">수정</button>
-            <button class="secondary-button" type="button" :disabled="memberLoading" @click="logoutMember">로그아웃</button>
-          </div>
-        </form>
-        <form class="account-form" @submit.prevent="searchMembers">
-          <label><span>회원 검색</span><input v-model.trim="memberSearchKeyword" type="search" placeholder="이메일, 이름, 전화번호" required /></label>
-          <div class="actions">
-            <button class="primary-button" type="submit" :disabled="memberLoading">검색</button>
-          </div>
-        </form>
-        <dl v-if="memberSearchResults.length" class="detail-list">
-          <div v-for="searchedMember in memberSearchResults" :key="searchedMember.memberId">
-            <dt>{{ searchedMember.name }}</dt>
-            <dd>{{ searchedMember.email }} · {{ searchedMember.phone || '-' }}</dd>
-          </div>
-        </dl>
-        <div class="danger-zone">
-          <strong>회원 탈퇴</strong>
-          <p>삭제하면 현재 계정이 물리 삭제되고 세션이 종료됩니다.</p>
-          <label><span>확인 문구</span><input v-model="deleteConfirm" type="text" placeholder="삭제" /></label>
-          <button class="danger-button" type="button" :disabled="memberLoading" @click="deleteMember">회원 삭제</button>
-        </div>
-      </div>
-    </section>
-
-    <main class="workspace" aria-label="주택 실거래가 검색 화면">
+    <main v-if="activePage === 'search'" class="workspace" aria-label="주택 실거래가 검색 화면">
       <section class="left-panel" aria-label="검색과 결과">
         <form class="search-panel" :class="{ 'is-collapsed': searchPanelCollapsed }" novalidate @submit.prevent="searchFirstPage">
           <div class="panel-heading">
@@ -2200,6 +2446,10 @@ export default {
         <div class="map-surface">
           <div ref="mapCanvas" v-once class="map-canvas" aria-label="Kakao 지도"></div>
           <div v-if="!mapReady" class="map-grid" aria-hidden="true"></div>
+          <div v-if="!mapReady || mapError" class="map-overlay-state" :class="{ 'is-error': mapError }">
+            <strong>{{ mapError ? '지도를 불러오지 못했습니다.' : '지도 준비 중입니다.' }}</strong>
+            <span>{{ mapStatusLabel }}</span>
+          </div>
           <div v-if="selectedItem" class="map-detail-panel">
             <button class="map-detail-close" type="button" aria-label="상세 닫기" @click="backToList">×</button>
             <strong>{{ displayAptName(selectedItem) }}</strong>
@@ -2223,7 +2473,162 @@ export default {
       </aside>
     </main>
 
+    <main v-else-if="activePage === 'account'" class="notice-page account-page" aria-label="회원 관리 화면">
+      <section class="notice-page-inner account-page-inner">
+        <div class="notice-page-heading">
+          <div>
+            <p class="section-kicker">Account</p>
+            <h2>회원 관리</h2>
+          </div>
+          <button class="back-button compact-button" type="button" @click="closeAccountPanel">검색으로</button>
+        </div>
+
+        <div v-if="!member" class="account-tabs" role="tablist" aria-label="인증 선택">
+          <button class="secondary-button compact-button" type="button" :class="{ 'is-active': accountMode === 'login' }" @click="switchAccountMode('login')">로그인</button>
+          <button class="secondary-button compact-button" type="button" :class="{ 'is-active': accountMode === 'signup' }" @click="switchAccountMode('signup')">회원가입</button>
+          <button class="secondary-button compact-button" type="button" :class="{ 'is-active': accountMode === 'password-reset' }" @click="switchAccountMode('password-reset')">비밀번호 찾기</button>
+        </div>
+
+        <p v-if="memberMessage" class="account-message">{{ memberMessage }}</p>
+        <p v-if="memberError" class="account-message is-error">{{ memberError }}</p>
+
+        <form v-if="accountMode === 'login' && !member" class="account-form" @submit.prevent="loginMember">
+          <label><span>이메일</span><input v-model.trim="loginForm.email" type="email" autocomplete="email" required /></label>
+          <label><span>비밀번호</span><input v-model="loginForm.password" type="password" autocomplete="current-password" required /></label>
+          <div class="actions">
+            <button class="primary-button" type="submit" :disabled="memberLoading">로그인</button>
+            <button class="secondary-button" type="button" @click="switchAccountMode('signup')">회원가입으로</button>
+          </div>
+        </form>
+
+        <form v-else-if="accountMode === 'password-reset' && !member" class="account-form" @submit.prevent="resetPassword">
+          <label><span>이메일</span><input v-model.trim="passwordResetForm.email" type="email" autocomplete="email" required /></label>
+          <label><span>이름</span><input v-model.trim="passwordResetForm.name" type="text" autocomplete="name" required /></label>
+          <label><span>전화번호</span><input v-model.trim="passwordResetForm.phone" type="tel" autocomplete="tel" /></label>
+          <label><span>새 비밀번호</span><input v-model="passwordResetForm.newPassword" type="password" autocomplete="new-password" required /></label>
+          <div class="actions">
+            <button class="primary-button" type="submit" :disabled="memberLoading">비밀번호 변경</button>
+            <button class="secondary-button" type="button" @click="switchAccountMode('login')">로그인으로</button>
+          </div>
+        </form>
+
+        <form v-else-if="accountMode === 'signup' && !member" class="account-form" @submit.prevent="signupMember">
+          <label><span>이메일</span><input v-model.trim="signupForm.email" type="email" autocomplete="email" required /></label>
+          <label><span>비밀번호</span><input v-model="signupForm.password" type="password" autocomplete="new-password" required /></label>
+          <label><span>이름</span><input v-model.trim="signupForm.name" type="text" autocomplete="name" required /></label>
+          <label><span>전화번호</span><input v-model.trim="signupForm.phone" type="tel" autocomplete="tel" /></label>
+          <div class="actions">
+            <button class="primary-button" type="submit" :disabled="memberLoading">회원가입</button>
+            <button class="secondary-button" type="button" @click="switchAccountMode('login')">로그인으로</button>
+          </div>
+        </form>
+
+        <div v-else-if="member" class="profile-layout">
+          <dl class="detail-list">
+            <div><dt>이메일</dt><dd>{{ member.email }}</dd></div>
+            <div><dt>이름</dt><dd>{{ member.name }}</dd></div>
+            <div><dt>전화번호</dt><dd>{{ member.phone || '-' }}</dd></div>
+          </dl>
+          <div v-if="!profileEditing" class="actions">
+            <button class="primary-button" type="button" :disabled="memberLoading" @click="startProfileEdit">수정</button>
+            <button class="secondary-button" type="button" :disabled="memberLoading" @click="logoutMember">로그아웃</button>
+          </div>
+          <form v-else class="account-form" @submit.prevent="updateMember">
+            <label><span>이름</span><input v-model.trim="profileForm.name" type="text" required /></label>
+            <label><span>전화번호</span><input v-model.trim="profileForm.phone" type="tel" /></label>
+            <div class="actions">
+              <button class="primary-button" type="submit" :disabled="memberLoading">저장</button>
+              <button class="secondary-button" type="button" :disabled="memberLoading" @click="cancelProfileEdit">취소</button>
+            </div>
+          </form>
+          <div class="danger-zone">
+            <strong>회원 탈퇴</strong>
+            <p>삭제하면 현재 계정이 완전히 삭제되고 세션이 종료됩니다.</p>
+            <label><span>확인 문구</span><input v-model="deleteConfirm" type="text" placeholder="삭제" /></label>
+            <button class="danger-button" type="button" :disabled="memberLoading" @click="deleteMember">회원 삭제</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <main v-else-if="activePage === 'member-search' && isNoticeAdmin" class="notice-page account-page" aria-label="회원 검색 화면">
+      <section class="notice-page-inner account-page-inner">
+        <div class="notice-page-heading">
+          <div>
+            <p class="section-kicker">Admin</p>
+            <h2>회원 검색</h2>
+          </div>
+          <button class="back-button compact-button" type="button" @click="openSearchPage">검색으로</button>
+        </div>
+
+        <p v-if="memberMessage" class="account-message">{{ memberMessage }}</p>
+        <p v-if="memberError" class="account-message is-error">{{ memberError }}</p>
+
+        <form class="account-form" @submit.prevent="searchMembers">
+          <label><span>검색어</span><input v-model.trim="memberSearchKeyword" type="search" placeholder="이메일, 이름, 전화번호" required /></label>
+          <div class="actions">
+            <button class="primary-button" type="submit" :disabled="memberLoading">검색</button>
+            <button class="secondary-button" type="button" :disabled="memberLoading" @click="clearMemberSearch">초기화</button>
+          </div>
+        </form>
+
+        <dl v-if="memberSearchResults.length" class="detail-list member-search-results">
+          <div v-for="searchedMember in memberSearchResults" :key="searchedMember.memberId">
+            <dt>{{ searchedMember.name }}</dt>
+            <dd>{{ searchedMember.email }} · {{ searchedMember.phone || '-' }}</dd>
+          </div>
+        </dl>
+      </section>
+    </main>
+
+    <main v-else class="notice-page" aria-label="공지사항 화면">
+      <section class="notice-page-inner">
+        <div class="notice-page-heading">
+          <div>
+            <p class="section-kicker">Notice</p>
+            <h2>공지사항</h2>
+          </div>
+          <span class="result-count">{{ notices.length.toLocaleString() }}건</span>
+        </div>
+
+        <p v-if="noticeMessage" class="account-message">{{ noticeMessage }}</p>
+        <p v-if="noticeError" class="account-message is-error">{{ noticeError }}</p>
+
+        <form v-if="isNoticeAdmin" class="notice-form" @submit.prevent="saveNotice">
+          <label><span>제목</span><input v-model.trim="noticeForm.title" type="text" maxlength="200" required /></label>
+          <label><span>내용</span><textarea v-model.trim="noticeForm.content" rows="5" required></textarea></label>
+          <div class="actions">
+            <button class="primary-button" type="submit" :disabled="noticeLoading">{{ noticeEditingId ? '수정' : '등록' }}</button>
+            <button class="secondary-button" type="button" :disabled="noticeLoading" @click="resetNoticeForm">취소</button>
+          </div>
+        </form>
+
+        <div v-if="noticeLoading && notices.length === 0" class="state-box loading-state">
+          <strong>공지사항을 불러오는 중입니다.</strong>
+        </div>
+        <div v-else-if="notices.length === 0" class="state-box">
+          <strong>등록된 공지사항이 없습니다.</strong>
+        </div>
+        <ul v-else class="notice-list">
+          <li v-for="notice in notices" :key="notice.noticeId">
+            <article class="notice-item">
+              <div class="notice-item-header">
+                <strong>{{ notice.title }}</strong>
+                <span>{{ displayNoticeDate(notice) }}</span>
+              </div>
+              <p>{{ notice.content }}</p>
+              <div v-if="isNoticeAdmin && notice.editable" class="notice-actions">
+                <button class="secondary-button compact-button" type="button" :disabled="noticeLoading" @click="editNotice(notice)">수정</button>
+                <button class="danger-button compact-button" type="button" :disabled="noticeLoading" @click="deleteNotice(notice)">삭제</button>
+              </div>
+            </article>
+          </li>
+        </ul>
+      </section>
+    </main>
+
     <ChatWidget
+      v-if="activePage === 'search'"
       :logged-in="!!member"
       :current-filters="filters"
       :current-page="searchPage"
